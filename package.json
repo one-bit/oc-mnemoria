@@ -1,0 +1,49 @@
+{
+  "name": "oc-mnemoria",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Persistent per-agent memory for OpenCode, powered by mnemoria",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "files": [
+    "dist",
+    "commands"
+  ],
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "memory",
+    "ai-memory",
+    "mnemoria",
+    "persistent-memory",
+    "per-agent-memory",
+    "llm-memory",
+    "ai-assistant"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/one-bit/oc-mnemoria.git"
+  },
+  "bugs": {
+    "url": "https://github.com/one-bit/oc-mnemoria/issues"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "latest",
+    "@types/node": "^22.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
