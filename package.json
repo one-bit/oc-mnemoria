@@ -1,11 +1,20 @@
 {
   "name": "oc-mnemoria",
   "version": "0.1.0",
-  "private": true,
-  "description": "Persistent per-agent memory for OpenCode, powered by mnemoria",
+  "description": "Persistent shared memory (hive mind) for OpenCode agents, powered by the mnemoria Rust engine",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./plugin": {
+      "types": "./dist/plugin.d.ts",
+      "import": "./dist/plugin.js"
+    }
+  },
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
@@ -20,21 +29,28 @@
   },
   "files": [
     "dist",
-    "commands"
+    "commands",
+    "install.sh"
   ],
   "keywords": [
     "opencode",
     "opencode-plugin",
+    "opencode-ai",
     "memory",
     "ai-memory",
     "mnemoria",
     "persistent-memory",
-    "per-agent-memory",
+    "agent-memory",
+    "hive-mind",
     "llm-memory",
-    "ai-assistant"
+    "ai-assistant",
+    "ai-agent",
+    "context-persistence",
+    "semantic-search"
   ],
-  "author": "",
+  "author": "one-bit (https://github.com/one-bit)",
   "license": "MIT",
+  "homepage": "https://github.com/one-bit/oc-mnemoria#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/one-bit/oc-mnemoria.git"

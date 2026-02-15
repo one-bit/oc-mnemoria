@@ -1,4 +1,11 @@
 src/
+*.test.ts
+*.test.js
 tsconfig.json
 tsup.config.ts
+eslint.config.js
 .gitignore
+.github/
+.opencode/
+opencode.json
+vitest.config.*
