@@ -21,6 +21,9 @@ vi.mock("./mnemoria-cli.js", () => {
     this.timeline = vi.fn().mockResolvedValue([]);
     this.exportAll = vi.fn().mockResolvedValue([]);
     this.verify = vi.fn().mockResolvedValue(true);
+    this.rebuild = vi.fn().mockResolvedValue(undefined);
+    this.enrichSearchResults = vi.fn().mockImplementation((results: unknown[]) => Promise.resolve(results));
+    this.enrichTimelineEntries = vi.fn().mockImplementation((entries: unknown[]) => Promise.resolve(entries));
   }
   MockMnemoriaCli.isAvailable = vi.fn().mockResolvedValue(true);
 
@@ -120,8 +123,9 @@ describe("setIntent", () => {
     const mind = await Mind.open();
     expect(mind.getCurrentChainId()).toBeNull();
     await mind.setIntent("fix bug", "Fix: fix bug", "plan");
-    expect(mind.getCurrentChainId()).toBeTruthy();
-    expect(mind.getCurrentChainId()!.length).toBe(16);
+    const chainId = mind.getCurrentChainId();
+    expect(chainId).toBeTruthy();
+    expect(chainId?.length).toBe(16);
   });
 
   it("resets chain on new intent", async () => {

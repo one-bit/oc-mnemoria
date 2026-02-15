@@ -22,11 +22,29 @@ import {
 } from "../types.js";
 import { generateId, estimateTokens } from "../utils/helpers.js";
 
+/** Pending observation for the batch queue. */
+interface PendingObservation {
+  type: EntryType;
+  summary: string;
+  content: string;
+  agent: AgentName;
+}
+
+/** How long (ms) to wait before flushing the batch queue. */
+const BATCH_FLUSH_DELAY_MS = 500;
+/** Maximum batch size before forcing an immediate flush. */
+const BATCH_MAX_SIZE = 20;
+
 export class Mind {
   private cli: MnemoriaCli;
   private currentChainId: string | null = null;
   private currentParentId: string | null = null;
   private config: PluginConfig;
+
+  // Batch queue for auto-captured observations
+  private batchQueue: PendingObservation[] = [];
+  private batchTimer: ReturnType<typeof setTimeout> | null = null;
+  private flushing = false;
 
   private constructor(cli: MnemoriaCli, config: PluginConfig) {
     this.cli = cli;
@@ -121,6 +139,64 @@ export class Mind {
   }
 
   /**
+   * Queue an observation for batched writing.
+   * Observations are flushed after BATCH_FLUSH_DELAY_MS or when the
+   * queue reaches BATCH_MAX_SIZE, whichever comes first.
+   */
+  queueObservation(input: {
+    type: EntryType;
+    summary: string;
+    content: string;
+    agent: AgentName;
+  }): void {
+    this.batchQueue.push(input);
+
+    // Force flush if we've hit the max batch size
+    if (this.batchQueue.length >= BATCH_MAX_SIZE) {
+      void this.flushBatch();
+      return;
+    }
+
+    // Otherwise, schedule a delayed flush
+    if (!this.batchTimer) {
+      this.batchTimer = setTimeout(() => {
+        void this.flushBatch();
+      }, BATCH_FLUSH_DELAY_MS);
+    }
+  }
+
+  /**
+   * Flush all pending observations to the store.
+   */
+  async flushBatch(): Promise<void> {
+    if (this.batchTimer) {
+      clearTimeout(this.batchTimer);
+      this.batchTimer = null;
+    }
+
+    if (this.flushing || this.batchQueue.length === 0) return;
+
+    this.flushing = true;
+    const batch = this.batchQueue.splice(0);
+
+    try {
+      // Write all entries sequentially (mnemoria uses file locks)
+      for (const obs of batch) {
+        await this.cli.add(obs.type, obs.summary, obs.content, obs.agent);
+      }
+    } catch (err) {
+      console.error(`[oc-mnemoria] Failed to flush batch (${batch.length} entries):`, err);
+    } finally {
+      this.flushing = false;
+    }
+  }
+
+  /** Number of observations waiting in the batch queue. */
+  get pendingCount(): number {
+    return this.batchQueue.length;
+  }
+
+  /**
    * Set the user's intent for this conversation turn.
    * Creates a new chain ID that links subsequent observations.
    */
@@ -144,10 +220,28 @@ export class Mind {
   }
 
   /**
+   * Mark a memory as forgotten/obsolete.
+   *
+   * Since the store is append-only, this records a "forgotten" marker
+   * entry rather than physically deleting. The marker contains the
+   * summary of the forgotten entry so context injection can filter it.
+   */
+  async forget(summary: string, reason: string, agent: AgentName): Promise<string> {
+    return this.cli.add(
+      "warning",
+      `[FORGOTTEN] ${summary.slice(0, 80)}`,
+      `Reason: ${reason}\nOriginal summary: ${summary}`,
+      agent
+    );
+  }
+
+  /**
    * Search the shared memory. Optionally filter by agent.
+   * Results are enriched with full content when available.
    */
   async search(query: string, limit = 10, agent?: AgentName): Promise<SearchResult[]> {
-    return this.cli.search(query, limit, agent);
+    const results = await this.cli.search(query, limit, agent);
+    return this.cli.enrichSearchResults(results);
   }
 
   /**
@@ -159,9 +253,11 @@ export class Mind {
 
   /**
    * Get a timeline of memories. Optionally filter by agent.
+   * Entries are enriched with full content when available.
    */
   async timeline(options?: Partial<TimelineOptions>, agent?: AgentName): Promise<Observation[]> {
-    const entries = await this.cli.timeline(options, agent);
+    const rawEntries = await this.cli.timeline(options, agent);
+    const entries = await this.cli.enrichTimelineEntries(rawEntries);
     return entries.map((e) => ({
       id: e.id,
       type: e.entry_type,
@@ -219,28 +315,77 @@ export class Mind {
 
     return { recentObservations, relevantMemories, tokenCount };
   }
+
+  /**
+   * Compact the memory store by removing forgotten/obsolete entries
+   * and optionally pruning entries older than a given age.
+   *
+   * @param maxAgeDays - If provided, remove entries older than this many days
+   * @returns Object with counts of kept and removed entries
+   */
+  async compact(maxAgeDays?: number): Promise<{ kept: number; removed: number }> {
+    const allEntries = await this.cli.exportAll();
+
+    // Collect summaries that have been marked as forgotten
+    const forgottenSummaries = new Set<string>();
+    for (const entry of allEntries) {
+      if (entry.summary.startsWith("[FORGOTTEN] ")) {
+        const original = entry.content.match(/Original summary:\s*(.+)/);
+        if (original) {
+          forgottenSummaries.add(original[1].trim());
+        }
+      }
+    }
+
+    const cutoff = maxAgeDays
+      ? Date.now() - maxAgeDays * 24 * 60 * 60 * 1000
+      : 0;
+
+    // Filter: keep entries that are not forgotten and not too old
+    const kept = allEntries.filter((entry) => {
+      // Remove [FORGOTTEN] markers themselves
+      if (entry.summary.startsWith("[FORGOTTEN] ")) return false;
+      // Remove entries whose summaries match a forgotten marker
+      if (forgottenSummaries.has(entry.summary)) return false;
+      // Remove entries older than the cutoff (if specified)
+      if (cutoff > 0 && entry.timestamp > 0 && entry.timestamp < cutoff) return false;
+      return true;
+    });
+
+    const removed = allEntries.length - kept.length;
+
+    if (removed > 0) {
+      // Rebuild the store: delete and re-add all kept entries
+      await this.cli.rebuild(kept);
+    }
+
+    return { kept: kept.length, removed };
+  }
 }
 
 // ─── Singleton ───────────────────────────────────────────────────────────────
 
-let mindInstance: Mind | null = null;
+let mindPromise: Promise<Mind> | null = null;
 
 /**
  * Get or create the shared Mind instance.
  * All agents share this single instance (and single mnemoria store).
+ *
+ * The promise itself is cached to prevent a race condition where two
+ * concurrent callers both trigger Mind.open() before either resolves.
  */
 export async function getMind(
   config?: Partial<PluginConfig>
 ): Promise<Mind> {
-  if (mindInstance) return mindInstance;
-
-  mindInstance = await Mind.open(config);
-  return mindInstance;
+  if (!mindPromise) {
+    mindPromise = Mind.open(config);
+  }
+  return mindPromise;
 }
 
 /**
  * Reset the shared Mind singleton (for testing).
  */
 export function resetMind(): void {
-  mindInstance = null;
+  mindPromise = null;
 }

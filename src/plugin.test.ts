@@ -59,6 +59,9 @@ vi.mock("./core/mnemoria-cli.js", () => {
     this.timeline = vi.fn().mockResolvedValue([]);
     this.exportAll = vi.fn().mockResolvedValue([]);
     this.verify = vi.fn().mockResolvedValue(true);
+    this.rebuild = vi.fn().mockResolvedValue(undefined);
+    this.enrichSearchResults = vi.fn().mockImplementation((results: unknown[]) => Promise.resolve(results));
+    this.enrichTimelineEntries = vi.fn().mockImplementation((entries: unknown[]) => Promise.resolve(entries));
   }
   MockMnemoriaCli.isAvailable = vi.fn().mockResolvedValue(true);
 
@@ -94,11 +97,13 @@ describe("OcMnemoria plugin", () => {
     const result = await OcMnemoria({} as never);
     expect(result).toBeDefined();
     expect(result.tool).toBeDefined();
-    expect(result.tool!.remember).toBeDefined();
-    expect(result.tool!.search_memory).toBeDefined();
-    expect(result.tool!.ask_memory).toBeDefined();
-    expect(result.tool!.memory_stats).toBeDefined();
-    expect(result.tool!.timeline).toBeDefined();
+    const tools = result.tool ?? {};
+    expect(tools.remember).toBeDefined();
+    expect(tools.search_memory).toBeDefined();
+    expect(tools.ask_memory).toBeDefined();
+    expect(tools.memory_stats).toBeDefined();
+    expect(tools.timeline).toBeDefined();
+    expect(tools.forget).toBeDefined();
   });
 
   it("returns hook handlers", async () => {
@@ -114,8 +119,8 @@ describe("OcMnemoria plugin", () => {
 describe("remember tool", () => {
   it("stores a memory and returns confirmation with context agent", async () => {
     const result = await OcMnemoria({} as never);
-    const remembertool = result.tool!.remember;
-    const output = await remembertool.execute(
+    const tools = result.tool ?? {};
+    const output = await tools.remember.execute(
       {
         type: "discovery",
         summary: "Found something important",
@@ -130,8 +135,8 @@ describe("remember tool", () => {
 
   it("uses the agent from context", async () => {
     const result = await OcMnemoria({} as never);
-    const remembertool = result.tool!.remember;
-    const output = await remembertool.execute(
+    const tools = result.tool ?? {};
+    const output = await tools.remember.execute(
       {
         type: "decision",
         summary: "Chose REST over GraphQL",
@@ -144,8 +149,8 @@ describe("remember tool", () => {
 
   it("defaults to build when context has no agent", async () => {
     const result = await OcMnemoria({} as never);
-    const remembertool = result.tool!.remember;
-    const output = await remembertool.execute(
+    const tools = result.tool ?? {};
+    const output = await tools.remember.execute(
       {
         type: "discovery",
         summary: "test",
@@ -160,8 +165,8 @@ describe("remember tool", () => {
 describe("search_memory tool", () => {
   it("returns message when no results found", async () => {
     const result = await OcMnemoria({} as never);
-    const searchTool = result.tool!.search_memory;
-    const output = await searchTool.execute(
+    const tools = result.tool ?? {};
+    const output = await tools.search_memory.execute(
       { query: "nonexistent topic" },
       mockContext()
     );
@@ -170,8 +175,8 @@ describe("search_memory tool", () => {
 
   it("rejects wildcard queries", async () => {
     const result = await OcMnemoria({} as never);
-    const searchTool = result.tool!.search_memory;
-    const output = await searchTool.execute({ query: "*" }, mockContext());
+    const tools = result.tool ?? {};
+    const output = await tools.search_memory.execute({ query: "*" }, mockContext());
     expect(output).toContain("Wildcard");
     expect(output).toContain("not supported");
   });
@@ -180,8 +185,8 @@ describe("search_memory tool", () => {
 describe("ask_memory tool", () => {
   it("returns an answer", async () => {
     const result = await OcMnemoria({} as never);
-    const askTool = result.tool!.ask_memory;
-    const output = await askTool.execute(
+    const tools = result.tool ?? {};
+    const output = await tools.ask_memory.execute(
       { question: "What did we work on?" },
       mockContext()
     );
@@ -192,8 +197,8 @@ describe("ask_memory tool", () => {
 describe("memory_stats tool", () => {
   it("returns formatted statistics", async () => {
     const result = await OcMnemoria({} as never);
-    const statsTool = result.tool!.memory_stats;
-    const output = await statsTool.execute({}, mockContext());
+    const tools = result.tool ?? {};
+    const output = await tools.memory_stats.execute({}, mockContext());
     expect(output).toContain("Memory Statistics");
     expect(output).toContain("Total entries: 5");
     expect(output).toContain("KB");
@@ -203,8 +208,8 @@ describe("memory_stats tool", () => {
 describe("timeline tool", () => {
   it("returns message when no memories exist", async () => {
     const result = await OcMnemoria({} as never);
-    const timelineTool = result.tool!.timeline;
-    const output = await timelineTool.execute({}, mockContext());
+    const tools = result.tool ?? {};
+    const output = await tools.timeline.execute({}, mockContext());
     expect(output).toContain("No memories found");
   });
 });

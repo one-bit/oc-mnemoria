@@ -25,18 +25,35 @@ describe("generateId", () => {
 // ─── estimateTokens ──────────────────────────────────────────────────────────
 
 describe("estimateTokens", () => {
-  it("estimates ~4 chars per token", () => {
-    expect(estimateTokens("abcd")).toBe(1);
-    expect(estimateTokens("abcdefgh")).toBe(2);
-  });
-
-  it("rounds up partial tokens", () => {
-    expect(estimateTokens("ab")).toBe(1); // ceil(2/4)=1
-    expect(estimateTokens("abcde")).toBe(2); // ceil(5/4)=2
-  });
-
   it("returns 0 for empty string", () => {
     expect(estimateTokens("")).toBe(0);
+  });
+
+  it("estimates dense text at ~4.5 chars per token", () => {
+    // No whitespace = dense text
+    const dense = "abcdefghijklmnopqrstuvwxyz"; // 26 chars, 0% whitespace
+    const tokens = estimateTokens(dense);
+    expect(tokens).toBe(Math.ceil(26 / 4.5)); // 6
+  });
+
+  it("estimates code-like text at ~3.5 chars per token", () => {
+    // Lots of whitespace = code-like
+    const code = "  const x = 1;\n  const y = 2;\n  return x + y;\n";
+    const tokens = estimateTokens(code);
+    const whitespace = (code.match(/\s/g) ?? []).length;
+    expect(whitespace / code.length).toBeGreaterThan(0.3);
+    expect(tokens).toBe(Math.ceil(code.length / 3.5));
+  });
+
+  it("estimates mixed text at ~4 chars per token", () => {
+    // Moderate whitespace = mixed
+    const mixed = "This is a normal sentence with some words.";
+    const tokens = estimateTokens(mixed);
+    expect(tokens).toBe(Math.ceil(mixed.length / 4));
+  });
+
+  it("always returns at least 1 for non-empty strings", () => {
+    expect(estimateTokens("a")).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -50,13 +67,13 @@ describe("truncateToTokens", () => {
 
   it("truncates text exceeding the token budget", () => {
     const text = "a".repeat(100);
-    const result = truncateToTokens(text, 10); // 10 tokens = 40 chars
-    expect(result).toBe("a".repeat(40) + "...");
-    expect(result.length).toBe(43); // 40 + "..."
+    const result = truncateToTokens(text, 10); // 10 tokens * 3.5 = 35 chars
+    expect(result).toBe("a".repeat(35) + "...");
+    expect(result.length).toBe(38); // 35 + "..."
   });
 
   it("handles exact boundary", () => {
-    const text = "a".repeat(40); // exactly 10 tokens
+    const text = "a".repeat(35); // exactly 10 tokens at 3.5 chars/token
     expect(truncateToTokens(text, 10)).toBe(text);
   });
 });
@@ -276,11 +293,11 @@ describe("extractUserIntent", () => {
     expect(result.context).toContain("testing");
   });
 
-  it("prioritizes feature over testing when both keywords present", () => {
-    // "Add tests" matches "add" (feature) before "test" (testing)
+  it("prioritizes testing over feature when test keywords are more specific", () => {
+    // "Add tests" — "test" (weight 2) beats "add" (weight 1) via scoring
     const result = extractUserIntent("Add tests for the auth module");
-    expect(result.goal).toMatch(/^Implement:/);
-    expect(result.context).toContain("feature");
+    expect(result.goal).toMatch(/^Test:/);
+    expect(result.context).toContain("testing");
   });
 
   it("extracts file paths from message", () => {

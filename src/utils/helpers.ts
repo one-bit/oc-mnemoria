@@ -14,14 +14,40 @@ export function generateId(): string {
   return randomBytes(8).toString("hex");
 }
 
-/** Rough token estimate: ~4 chars per token. */
+/**
+ * Improved token estimate.
+ *
+ * Uses a content-aware heuristic instead of a flat 4 chars/token ratio:
+ * - Whitespace-heavy text (code with indentation): ~3.5 chars/token
+ * - Dense text (natural language): ~4.5 chars/token
+ * - Mixed/default: ~4 chars/token
+ *
+ * Falls back gracefully — always returns at least 0.
+ */
 export function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
+  if (text.length === 0) return 0;
+
+  // Count whitespace ratio to detect code vs prose
+  const whitespaceCount = (text.match(/\s/g) ?? []).length;
+  const whitespaceRatio = whitespaceCount / text.length;
+
+  // Code-like content has more whitespace (indentation, newlines)
+  let charsPerToken: number;
+  if (whitespaceRatio > 0.3) {
+    charsPerToken = 3.5; // code-like
+  } else if (whitespaceRatio < 0.12) {
+    charsPerToken = 4.5; // dense/compact text
+  } else {
+    charsPerToken = 4.0; // mixed
+  }
+
+  return Math.ceil(text.length / charsPerToken);
 }
 
 /** Truncate text to fit within a token budget. */
 export function truncateToTokens(text: string, maxTokens: number): string {
-  const maxChars = maxTokens * 4;
+  // Use conservative estimate (3.5 chars/token) to avoid over-truncation
+  const maxChars = Math.floor(maxTokens * 3.5);
   if (text.length <= maxChars) return text;
   return text.slice(0, maxChars) + "...";
 }
@@ -228,9 +254,72 @@ export function classifyObservationType(
 
 // ─── User intent extraction ──────────────────────────────────────────────────
 
-/** Extract the user's intent from their message. */
+/**
+ * Intent categories with their keyword patterns, weights, and goal prefixes.
+ * Higher weight = more specific intent. When multiple categories match,
+ * the one with the highest total score wins.
+ */
+const INTENT_CATEGORIES: Array<{
+  name: string;
+  prefix: string;
+  patterns: Array<{ regex: RegExp; weight: number }>;
+}> = [
+  {
+    name: "bugfix",
+    prefix: "Fix",
+    patterns: [
+      { regex: /\bbug\b/i, weight: 3 },
+      { regex: /\bfix\b/i, weight: 2 },
+      { regex: /\bbroken\b/i, weight: 3 },
+      { regex: /\berror\b/i, weight: 2 },
+      { regex: /\bissue\b/i, weight: 1 },
+    ],
+  },
+  {
+    name: "refactor",
+    prefix: "Refactor",
+    patterns: [
+      { regex: /\brefactor\b/i, weight: 3 },
+      { regex: /\bimprove\b/i, weight: 2 },
+      { regex: /\bclean\b/i, weight: 2 },
+      { regex: /\boptimiz/i, weight: 2 },
+    ],
+  },
+  {
+    name: "testing",
+    prefix: "Test",
+    patterns: [
+      { regex: /\btests?\b/i, weight: 2 },
+      { regex: /\bspec\b/i, weight: 3 },
+      { regex: /\bcoverage\b/i, weight: 3 },
+    ],
+  },
+  {
+    name: "feature",
+    prefix: "Implement",
+    patterns: [
+      { regex: /\badd\b/i, weight: 1 },
+      { regex: /\bimplement\b/i, weight: 3 },
+      { regex: /\bcreate\b/i, weight: 2 },
+      { regex: /\bbuild\b/i, weight: 1 },
+      { regex: /\bnew\b/i, weight: 1 },
+    ],
+  },
+  {
+    name: "exploration",
+    prefix: "Understand",
+    patterns: [
+      { regex: /\bexplain\b/i, weight: 3 },
+      { regex: /\bwhat\b/i, weight: 1 },
+      { regex: /\bhow\b/i, weight: 1 },
+      { regex: /\bwhy\b/i, weight: 2 },
+      { regex: /\bdescribe\b/i, weight: 3 },
+    ],
+  },
+];
+
+/** Extract the user's intent from their message using weighted scoring. */
 export function extractUserIntent(message: string): UserIntent {
-  const lower = message.toLowerCase();
   let goal = message.slice(0, 200);
 
   const filePaths: string[] = [];
@@ -242,21 +331,26 @@ export function extractUserIntent(message: string): UserIntent {
 
   const context: string[] = [];
 
-  if (/fix|bug|issue|broken|error/i.test(lower)) {
-    context.push("bugfix");
-    goal = `Fix: ${goal}`;
-  } else if (/refactor|improve|clean|optimiz/i.test(lower)) {
-    context.push("refactor");
-    goal = `Refactor: ${goal}`;
-  } else if (/add|implement|create|build|new/i.test(lower)) {
-    context.push("feature");
-    goal = `Implement: ${goal}`;
-  } else if (/explain|what|how|why|describe/i.test(lower)) {
-    context.push("exploration");
-    goal = `Understand: ${goal}`;
-  } else if (/test|spec|coverage/i.test(lower)) {
-    context.push("testing");
-    goal = `Test: ${goal}`;
+  // Score each category and pick the highest
+  let bestScore = 0;
+  let bestCategory: (typeof INTENT_CATEGORIES)[number] | null = null;
+
+  for (const category of INTENT_CATEGORIES) {
+    let score = 0;
+    for (const { regex, weight } of category.patterns) {
+      if (regex.test(message)) {
+        score += weight;
+      }
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestCategory = category;
+    }
+  }
+
+  if (bestCategory && bestScore > 0) {
+    context.push(bestCategory.name);
+    goal = `${bestCategory.prefix}: ${goal}`;
   }
 
   return { goal, context, filePaths };

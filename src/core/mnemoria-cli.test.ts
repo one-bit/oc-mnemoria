@@ -22,7 +22,8 @@ const { mockExecFileAsync, mockedExistsSync, mockedReadFileSync } = vi.hoisted((
 vi.mock("node:child_process", () => {
   const execFile = vi.fn();
   // Set the custom promisify symbol so `promisify(execFile)` returns our mock
-  (execFile as unknown as Record<symbol, unknown>)[promisify.custom!] =
+  const customSymbol = promisify.custom as symbol;
+  (execFile as unknown as Record<symbol, unknown>)[customSymbol] =
     mockExecFileAsync;
   return { execFile };
 });

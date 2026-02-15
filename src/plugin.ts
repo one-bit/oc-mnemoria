@@ -20,14 +20,68 @@ import type { AgentName, EntryType } from "./types.js";
 
 const DEFAULT_AGENT: AgentName = "build";
 
-/** Track the current agent per session. */
+/** Maximum number of sessions to track before evicting the oldest. */
+const MAX_SESSION_ENTRIES = 100;
+
+/** Track the current agent per session (bounded to prevent memory leaks). */
 const sessionAgentMap = new Map<string, AgentName>();
+
+function setSessionAgent(sessionID: string, agent: AgentName): void {
+  // Delete first so re-insertion moves the key to the end (Map preserves insertion order)
+  sessionAgentMap.delete(sessionID);
+  sessionAgentMap.set(sessionID, agent);
+
+  // Evict oldest entries when the map exceeds the cap
+  if (sessionAgentMap.size > MAX_SESSION_ENTRIES) {
+    const oldest = sessionAgentMap.keys().next().value;
+    if (oldest !== undefined) {
+      sessionAgentMap.delete(oldest);
+    }
+  }
+}
 
 function getSessionAgent(sessionID?: string): AgentName {
   if (sessionID) {
     return sessionAgentMap.get(sessionID) ?? DEFAULT_AGENT;
   }
   return DEFAULT_AGENT;
+}
+
+// ─── Circuit Breaker for Hook CLI Calls ──────────────────────────────────────
+
+/** Number of consecutive hook failures before the breaker opens. */
+const BREAKER_THRESHOLD = 5;
+/** How long (ms) the breaker stays open before allowing a retry. */
+const BREAKER_RESET_MS = 60_000;
+
+let hookFailureCount = 0;
+let breakerOpenedAt = 0;
+
+/**
+ * Returns true if the circuit breaker is open (hooks should skip CLI calls).
+ * After BREAKER_RESET_MS, the breaker half-opens to allow a single retry.
+ */
+function isBreakerOpen(): boolean {
+  if (hookFailureCount < BREAKER_THRESHOLD) return false;
+  // Half-open: allow a retry after the reset window
+  if (Date.now() - breakerOpenedAt >= BREAKER_RESET_MS) return false;
+  return true;
+}
+
+function recordHookSuccess(): void {
+  hookFailureCount = 0;
+  breakerOpenedAt = 0;
+}
+
+function recordHookFailure(): void {
+  hookFailureCount++;
+  if (hookFailureCount >= BREAKER_THRESHOLD && breakerOpenedAt === 0) {
+    breakerOpenedAt = Date.now();
+    console.error(
+      `[oc-mnemoria] Circuit breaker opened after ${BREAKER_THRESHOLD} consecutive failures. ` +
+        `Hooks will skip CLI calls for ${BREAKER_RESET_MS / 1000}s.`
+    );
+  }
 }
 
 const OcMnemoria: Plugin = async (_input: PluginInput) => {
@@ -230,6 +284,27 @@ const OcMnemoria: Plugin = async (_input: PluginInput) => {
           return `Timeline (${observations.length} memories):\n\n${output}`;
         },
       }),
+
+      forget: tool({
+        description:
+          "Mark a memory as forgotten/obsolete. Since the store is append-only, " +
+          "this records a marker rather than physically deleting. Use this when " +
+          "a previously stored memory is incorrect, outdated, or no longer relevant.",
+        args: {
+          summary: tool.schema
+            .string()
+            .describe("The summary of the memory to forget (should match the original)"),
+          reason: tool.schema
+            .string()
+            .describe("Why this memory should be forgotten"),
+        },
+        async execute(args, context) {
+          const mind = await getMind();
+          const agentName = (context.agent as AgentName) || DEFAULT_AGENT;
+          const id = await mind.forget(args.summary, args.reason, agentName);
+          return `Marked as forgotten (${agentName}): ${args.summary} (marker id: ${id})`;
+        },
+      }),
     },
 
     "tool.execute.after": async (hookInput, hookOutput) => {
@@ -245,6 +320,8 @@ const OcMnemoria: Plugin = async (_input: PluginInput) => {
         toolName === "grep" ||
         toolName === "glob"
       ) {
+        if (isBreakerOpen()) return;
+
         try {
           const agentName = getSessionAgent(sessionID);
           const mind = await getMind();
@@ -255,20 +332,17 @@ const OcMnemoria: Plugin = async (_input: PluginInput) => {
           );
           const obsType = classifyObservationType(toolName, toolOutput);
 
-          await mind.rememberWithContext({
+          // Queue observation for batched writing instead of writing immediately.
+          // This reduces CLI invocations during rapid tool use bursts.
+          mind.queueObservation({
             type: obsType,
             summary: extracted.summary,
             content: extracted.content,
             agent: agentName,
-            tool: toolName,
-            metadata: {
-              callId: hookInput.callID,
-              filePaths: extracted.filePaths,
-              findings: extracted.findings,
-              patterns: extracted.patterns,
-            },
           });
+          recordHookSuccess();
         } catch (err) {
+          recordHookFailure();
           console.error("[oc-mnemoria] Failed to remember tool use:", err);
         }
       }
@@ -280,7 +354,10 @@ const OcMnemoria: Plugin = async (_input: PluginInput) => {
         const agentName =
           (hookInput.agent as AgentName) || DEFAULT_AGENT;
 
-        sessionAgentMap.set(sessionID, agentName);
+        // Always track the session agent (cheap in-memory operation)
+        setSessionAgent(sessionID, agentName);
+
+        if (isBreakerOpen()) return;
 
         const message = hookOutput.message;
         const mind = await getMind();
@@ -303,12 +380,14 @@ const OcMnemoria: Plugin = async (_input: PluginInput) => {
         ) {
           const intent = extractUserIntent(messageText);
           await mind.setIntent(messageText, intent.goal, agentName);
+          recordHookSuccess();
 
           console.error(
             `[oc-mnemoria] [${agentName}] Set intent: ${intent.goal.slice(0, 50)}`
           );
         }
       } catch (err) {
+        recordHookFailure();
         console.error("[oc-mnemoria] Failed to capture intent:", err);
       }
     },
@@ -336,7 +415,19 @@ const OcMnemoria: Plugin = async (_input: PluginInput) => {
           ""
         );
 
-        const context = await mind.getContext();
+        // First get context without a query to find the latest intent
+        const initialContext = await mind.getContext();
+
+        // Extract the latest intent text to use as a relevance query
+        const intentObs = initialContext.recentObservations.find(
+          (obs) => obs.type === "intent"
+        );
+        const contextQuery = intentObs?.summary.replace(/^Intent:\s*/i, "") ?? undefined;
+
+        // Re-fetch context with the intent query to get relevant memories
+        const context = contextQuery
+          ? await mind.getContext(contextQuery)
+          : initialContext;
 
         const sections: string[] = [];
 
@@ -353,6 +444,17 @@ const OcMnemoria: Plugin = async (_input: PluginInput) => {
             ...recentLines,
             ""
           );
+        }
+
+        // Add relevant memories if the query found matches
+        if (context.relevantMemories.length > 0) {
+          const relevantLines = context.relevantMemories
+            .slice(0, 5)
+            .map((r) => {
+              const agentTag = r.entry.agent_name ? ` (${r.entry.agent_name})` : "";
+              return `- [${r.entry.entry_type}]${agentTag} ${r.entry.summary}`;
+            });
+          sections.push("## Relevant Memories", ...relevantLines, "");
         }
 
         const intentObservations = context.recentObservations.filter(
