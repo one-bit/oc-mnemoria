@@ -1,6 +1,7 @@
 # oc-mnemoria
 
 [![CI](https://github.com/one-bit/oc-mnemoria/actions/workflows/ci.yml/badge.svg)](https://github.com/one-bit/oc-mnemoria/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/oc-mnemoria)](https://www.npmjs.com/package/oc-mnemoria)
 
 Persistent shared memory for [OpenCode](https://opencode.ai) agents, powered
 by [mnemoria](https://crates.io/crates/mnemoria).
