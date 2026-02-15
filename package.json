@@ -9,8 +9,11 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
-    "lint": "tsc --noEmit",
+    "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm run lint",
+    "audit:security": "npm audit --omit=dev",
+    "audit:licenses": "npx license-checker --production --failOn 'GPL-2.0;GPL-3.0;AGPL-1.0;AGPL-3.0;SSPL-1.0;EUPL-1.1;EUPL-1.2'",
     "prepublishOnly": "npm run build"
   },
   "files": [
@@ -38,10 +41,13 @@
     "url": "https://github.com/one-bit/oc-mnemoria/issues"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.2",
     "@opencode-ai/plugin": "latest",
     "@types/node": "^22.0.0",
+    "eslint": "^9.39.2",
     "tsup": "^8.0.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.55.0"
   },
   "engines": {
     "node": ">=18.0.0"

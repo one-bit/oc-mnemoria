@@ -27,13 +27,6 @@ function parseAgentFromContent(content: string): AgentName | undefined {
   return match?.[1] as AgentName | undefined;
 }
 
-/** Parse an agent name from a summary that starts with "[agent] ...". */
-function parseAgentFromSummary(summary: string): AgentName | undefined {
-  // Timeline/search output from CLI won't have this, but our own
-  // summaries embed it when the agent is known from content.
-  return undefined; // agent info lives in content, not summary
-}
-
 export class Mind {
   private cli: MnemoriaCli;
   private currentChainId: string | null = null;
