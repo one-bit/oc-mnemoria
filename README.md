@@ -144,6 +144,108 @@ Observations are categorized when stored:
 | `/memory recent`     | Show recent memories                 |
 | `/memory timeline`   | Chronological view                   |
 
+## Inspecting memories from the command line
+
+You can use the `mnemoria` CLI directly to browse, search, and manage the
+memory store outside of OpenCode. All commands use `--path .opencode` to
+point at your project's store (mnemoria auto-appends `mnemoria/` to resolve
+the actual data directory).
+
+### Browse the timeline
+
+```sh
+# Most recent 20 entries (newest first)
+mnemoria --path .opencode timeline -r
+
+# Last 5 entries
+mnemoria --path .opencode timeline -r -l 5
+
+# Only entries from the build agent
+mnemoria --path .opencode timeline -a build
+
+# Entries from a specific time range (Unix ms timestamps)
+mnemoria --path .opencode timeline -s 1700000000000 -u 1700100000000
+```
+
+Output looks like:
+
+```
+Timeline (3 entries):
+1. [discovery] (build) Found async pattern in auth module - 1700000100000
+2. [decision] (plan) Use JWT for session tokens - 1700000050000
+3. [intent] (plan) Fix authentication flow - 1700000000000
+```
+
+### Search memories
+
+```sh
+# Keyword + semantic hybrid search
+mnemoria --path .opencode search "authentication"
+
+# Limit results
+mnemoria --path .opencode search "error handling" -l 5
+
+# Search only one agent's memories
+mnemoria --path .opencode search -a review "security"
+```
+
+### Ask a question
+
+```sh
+# Ask a natural language question against the memory store
+mnemoria --path .opencode ask "What decisions were made about the database schema?"
+
+# Scoped to a single agent
+mnemoria --path .opencode ask -a plan "What was the original plan for auth?"
+```
+
+### View statistics
+
+```sh
+mnemoria --path .opencode stats
+```
+
+```
+Memory Statistics:
+  Total entries: 42
+  File size: 4096 bytes
+  Oldest entry: 1700000000000
+  Newest entry: 1700001000000
+```
+
+### Export to JSON
+
+```sh
+mnemoria --path .opencode export memories.json
+```
+
+This produces a JSON array with full entry data including `agent_name`,
+`entry_type`, `summary`, `content`, `timestamp`, and checksum fields.
+Useful for scripting, analysis, or migrating data.
+
+### Add a memory manually
+
+```sh
+mnemoria --path .opencode add \
+  -a build \
+  -t decision \
+  -s "Switched from REST to GraphQL" \
+  "After benchmarking, GraphQL reduced payload size by 60%"
+```
+
+The `-t` flag accepts any entry type: `intent`, `discovery`, `decision`,
+`problem`, `solution`, `pattern`, `warning`, `success`, `refactor`,
+`bugfix`, `feature`. Defaults to `discovery` if omitted.
+
+### Verify store integrity
+
+```sh
+mnemoria --path .opencode verify
+```
+
+Checks the CRC32 checksum chain across all entries. Returns a non-zero exit
+code on corruption, making it suitable for CI or pre-commit hooks.
+
 ## Git integration
 
 Mnemoria's append-only binary format is designed for version control. You
