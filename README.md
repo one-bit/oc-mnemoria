@@ -65,7 +65,7 @@ cp commands/*.md ~/.config/opencode/commands/
 All agents share a single memory store:
 
 ```
-.opencode/memory/mnemoria/
+.opencode/mnemoria/mnemoria/
   log.bin           # append-only binary log
   manifest.json     # metadata and checksums
   mnemoria.lock     # advisory file lock
@@ -74,9 +74,9 @@ All agents share a single memory store:
 You can interact with the store directly using the `mnemoria` CLI:
 
 ```sh
-mnemoria --path .opencode/memory stats
-mnemoria --path .opencode/memory search "authentication"
-mnemoria --path .opencode/memory export memories.json
+mnemoria --path .opencode/mnemoria stats
+mnemoria --path .opencode/mnemoria search "authentication"
+mnemoria --path .opencode/mnemoria export memories.json
 ```
 
 ### Agent tagging
@@ -150,14 +150,14 @@ Mnemoria's append-only binary format is designed for version control. You
 can commit the memory store to track history alongside your code:
 
 ```sh
-git add .opencode/memory/
+git add .opencode/mnemoria/
 git commit -m "update agent memories"
 ```
 
 Or ignore it:
 
 ```sh
-echo ".opencode/memory/" >> .gitignore
+echo ".opencode/mnemoria/" >> .gitignore
 ```
 
 ## FAQ
@@ -178,7 +178,7 @@ there's ~50ms overhead per operation from process spawning.
 **Can I reset the memory?**
 Delete the store directory:
 ```sh
-rm -rf .opencode/memory/mnemoria/
+rm -rf .opencode/mnemoria/mnemoria/
 ```
 
 **Can I search only one agent's memories?**

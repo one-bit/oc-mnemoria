@@ -69,7 +69,7 @@ export type AgentName = "plan" | "build" | "ask" | "review" | (string & {});
  * Configuration for the plugin.
  */
 export interface PluginConfig {
-  /** Base directory for the shared memory store, relative to project root. Default: ".opencode/memory" */
+  /** Base directory for the shared memory store, relative to project root. Default: ".opencode/mnemoria" */
   memoryDir: string;
   /** Maximum context observations injected into the system prompt. Default: 20 */
   maxContextObservations: number;
@@ -80,7 +80,7 @@ export interface PluginConfig {
 }
 
 export const DEFAULT_CONFIG: PluginConfig = {
-  memoryDir: ".opencode/memory",
+  memoryDir: ".opencode/mnemoria",
   maxContextObservations: 20,
   maxContextTokens: 2000,
   debug: false,
