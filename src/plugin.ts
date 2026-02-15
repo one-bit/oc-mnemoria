@@ -70,15 +70,16 @@ const OcMnemoria: Plugin = async (_input: PluginInput) => {
             .string()
             .describe("Detailed content to store"),
         },
-        async execute(args) {
+        async execute(args, context) {
           const mind = await getMind();
+          const agentName = (context.agent as AgentName) || DEFAULT_AGENT;
           const id = await mind.remember({
             type: args.type as EntryType,
             summary: args.summary,
             content: args.content,
-            agent: DEFAULT_AGENT,
+            agent: agentName,
           });
-          return `Stored in memory: ${args.summary} (id: ${id})`;
+          return `Stored in memory (${agentName}): ${args.summary} (id: ${id})`;
         },
       }),
 
