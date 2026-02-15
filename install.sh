@@ -53,27 +53,27 @@ add_plugin_to_config() {
         config_path="$CONFIG_FILE"
         echo '{
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["oc-mnemoria"]
+  "plugin": ["oc-mnemoria/plugin"]
 }' > "$config_path"
         echo "   Created $config_path"
         return
     fi
 
-    if grep -q '"oc-mnemoria"' "$config_path" 2>/dev/null; then
+    if grep -q '"oc-mnemoria/plugin"' "$config_path" 2>/dev/null; then
         echo "   Plugin already configured in $config_path"
         return
     fi
 
     if command -v jq &> /dev/null; then
         if jq -e '.plugin' "$config_path" > /dev/null 2>&1; then
-            jq '.plugin += ["oc-mnemoria"]' "$config_path" > "$config_path.tmp" && mv "$config_path.tmp" "$config_path"
-            echo "   Added oc-mnemoria to plugin array in $config_path"
+            jq '.plugin += ["oc-mnemoria/plugin"]' "$config_path" > "$config_path.tmp" && mv "$config_path.tmp" "$config_path"
+            echo "   Added oc-mnemoria/plugin to plugin array in $config_path"
         else
-            jq '. + {plugin: ["oc-mnemoria"]}' "$config_path" > "$config_path.tmp" && mv "$config_path.tmp" "$config_path"
-            echo "   Added plugin array with oc-mnemoria to $config_path"
+            jq '. + {plugin: ["oc-mnemoria/plugin"]}' "$config_path" > "$config_path.tmp" && mv "$config_path.tmp" "$config_path"
+            echo "   Added plugin array with oc-mnemoria/plugin to $config_path"
         fi
     else
-        echo "   jq not found. Please manually add \"oc-mnemoria\" to the plugin array in $config_path"
+        echo "   jq not found. Please manually add \"oc-mnemoria/plugin\" to the plugin array in $config_path"
     fi
 }
 

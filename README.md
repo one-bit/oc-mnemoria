@@ -38,14 +38,22 @@ cargo install mnemoria
 
 ### 2. Add the plugin to your project
 
-Add `oc-mnemoria` to the `plugin` array in your `opencode.json`:
+Add `oc-mnemoria/plugin` to the `plugin` array in your `opencode.json`:
 
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["oc-mnemoria"]
+  "plugin": ["oc-mnemoria/plugin"]
 }
 ```
+
+> **Important:** You must use `"oc-mnemoria/plugin"`, not `"oc-mnemoria"`.
+> The bare package name resolves to the main entry point which re-exports
+> helpers, constants, and classes alongside the plugin function. OpenCode's
+> plugin loader iterates over every export and tries to call each one as a
+> plugin initializer, so non-function exports like `DEFAULT_CONFIG` cause a
+> `TypeError: fn is not a function` crash. The `/plugin` subpath exports only
+> the plugin function and avoids this issue.
 
 Or use the install script:
 
