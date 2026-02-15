@@ -2,9 +2,21 @@
 
 [![CI](https://github.com/one-bit/oc-mnemoria/actions/workflows/ci.yml/badge.svg)](https://github.com/one-bit/oc-mnemoria/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/oc-mnemoria)](https://www.npmjs.com/package/oc-mnemoria)
+[![Sponsor](https://img.shields.io/badge/Sponsor-GitHub%20Sponsors-181717?logo=githubsponsors)](https://github.com/sponsors/one-bit)
 
 Persistent shared memory for [OpenCode](https://opencode.ai) agents, powered
 by [mnemoria](https://crates.io/crates/mnemoria).
+
+## Support this project
+
+If this project has been helpful to you, you are welcome to sponsor it.
+Sponsorship helps me spend more time maintaining it, fixing bugs, and
+building new features.
+
+No pressure at all - starring the repo, sharing it, or giving feedback also
+means a lot.
+
+[Become a sponsor](https://github.com/sponsors/one-bit)
 
 ## What it does
 
