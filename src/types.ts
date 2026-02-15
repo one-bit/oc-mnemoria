@@ -23,6 +23,7 @@ export type EntryType =
  */
 export interface MemoryEntry {
   id: string;
+  agent_name: string;
   entry_type: EntryType;
   summary: string;
   content: string;

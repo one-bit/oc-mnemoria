@@ -81,18 +81,16 @@ mnemoria --path .opencode export memories.json
 
 ### Agent tagging
 
-Every memory entry includes an `Agent: <name>` tag in its content, making it
-searchable and visible when retrieved. When the mnemoria CLI ships with
-native `--agent` support, the plugin will switch to using that.
+Every memory entry is tagged with the agent that created it via mnemoria's
+native `--agent` flag. The agent name is a first-class field on each entry,
+visible in search results, timeline output, and JSON exports.
 
-Example of a stored entry's content:
+```sh
+# Search only the build agent's memories
+mnemoria --path .opencode search -a build "authentication"
 
-```
-Agent: build
-Found that the auth module uses JWT tokens with RS256 signing.
-Tool: read
-Files: src/auth/jwt.ts
-Findings: Functions: verifyToken, signToken, refreshToken
+# Show only the plan agent's timeline
+mnemoria --path .opencode timeline -a plan
 ```
 
 ### Automatic capture
@@ -182,9 +180,8 @@ rm -rf .opencode/mnemoria/
 ```
 
 **Can I search only one agent's memories?**
-Search for the agent name as part of the query (e.g. `"build authentication"`)
-since the agent tag is indexed in the content. Once the mnemoria CLI ships
-native `--agent` filtering, this will be more precise.
+Yes. Pass the `agent` parameter to `search_memory`, `ask_memory`, or
+`timeline`. From the CLI: `mnemoria --path .opencode search -a build "auth"`.
 
 ## License
 

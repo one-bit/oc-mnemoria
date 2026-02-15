@@ -1,5 +1,5 @@
 /**
- * Wrapper around the `mnemoria` CLI binary.
+ * Wrapper around the `mnemoria` CLI binary (v0.3.1+).
  *
  * All interaction with the Rust mnemoria engine goes through this module.
  * Each method shells out to the `mnemoria` binary, parses the output, and
@@ -85,33 +85,26 @@ export class MnemoriaCli {
   /**
    * Add a memory entry. Returns the entry ID.
    *
-   * When `agent` is provided, it is embedded as an `Agent: <name>` line
-   * at the top of the content so it's indexed by the full-text engine.
-   * Once the mnemoria CLI ships with `--agent`, this will switch to using
-   * the native flag instead.
+   * `agent` is required by mnemoria v0.3.1+.
    */
   async add(
     entryType: EntryType,
     summary: string,
     content: string,
-    agent?: string
+    agent: string
   ): Promise<string> {
     await this.ensureReady();
-
-    // Embed agent tag in content for searchability.
-    const taggedContent = agent
-      ? `Agent: ${agent}\n${content}`
-      : content;
-
     const output = await run([
       "--path",
       this.basePath,
       "add",
+      "-a",
+      agent,
       "-t",
       entryType,
       "-s",
       summary,
-      taggedContent,
+      content,
     ]);
     // Output: "Added entry: <uuid>"
     const match = output.match(/Added entry:\s+(.+)/);
@@ -121,21 +114,23 @@ export class MnemoriaCli {
   /**
    * Search memories. Returns parsed results.
    *
-   * Output format:
+   * Output format (v0.3.1):
    *   Found N results:
-   *   1. [type] summary (score: 0.123)
-   *   2. ...
+   *   1. [type] (agent) summary (score: 0.123)
    */
-  async search(query: string, limit = 10): Promise<SearchResult[]> {
+  async search(query: string, limit = 10, agent?: string): Promise<SearchResult[]> {
     await this.ensureReady();
-    const output = await run([
+    const args = [
       "--path",
       this.basePath,
       "search",
       query,
       "-l",
       String(limit),
-    ]);
+    ];
+    if (agent) args.push("-a", agent);
+
+    const output = await run(args);
 
     if (output.includes("Found 0 results") || output.trim() === "") {
       return [];
@@ -145,26 +140,24 @@ export class MnemoriaCli {
     const lines = output.split("\n").filter((l) => l.trim());
 
     for (const line of lines) {
-      // Match: "1. [discovery] Some summary (score: 0.288)"
+      // Match: "1. [discovery] (build) Some summary (score: 0.288)"
       const m = line.match(
-        /^\d+\.\s+\[(\w+)]\s+(.+?)\s+\(score:\s+([\d.]+)\)$/
+        /^\d+\.\s+\[(\w+)]\s+\((\w+)\)\s+(.+?)\s+\(score:\s+([\d.]+)\)$/
       );
       if (m) {
-        const entryType = m[1] as EntryType;
-        const summary = m[2];
-        const score = parseFloat(m[3]);
         results.push({
-          id: "", // CLI doesn't expose ID in search output
+          id: "",
           entry: {
             id: "",
-            entry_type: entryType,
-            summary,
+            agent_name: m[2],
+            entry_type: m[1] as EntryType,
+            summary: m[3],
             content: "",
             timestamp: 0,
             checksum: 0,
             prev_checksum: 0,
           },
-          score,
+          score: parseFloat(m[4]),
         });
       }
     }
@@ -175,9 +168,11 @@ export class MnemoriaCli {
   /**
    * Ask a question. Returns the text answer.
    */
-  async ask(question: string): Promise<string> {
+  async ask(question: string, agent?: string): Promise<string> {
     await this.ensureReady();
-    return await run(["--path", this.basePath, "ask", question]);
+    const args = ["--path", this.basePath, "ask", question];
+    if (agent) args.push("-a", agent);
+    return await run(args);
   }
 
   /**
@@ -210,17 +205,18 @@ export class MnemoriaCli {
   /**
    * Get timeline entries.
    *
-   * Output format:
+   * Output format (v0.3.1):
    *   Timeline (N entries):
-   *   1. [type] summary - timestamp
+   *   1. [type] (agent) summary - timestamp
    */
-  async timeline(options?: Partial<TimelineOptions>): Promise<MemoryEntry[]> {
+  async timeline(options?: Partial<TimelineOptions>, agent?: string): Promise<MemoryEntry[]> {
     await this.ensureReady();
     const args = ["--path", this.basePath, "timeline"];
     if (options?.limit) args.push("-l", String(options.limit));
     if (options?.since) args.push("-s", String(options.since));
     if (options?.until) args.push("-u", String(options.until));
     if (options?.reverse) args.push("-r");
+    if (agent) args.push("-a", agent);
 
     const output = await run(args);
 
@@ -232,15 +228,16 @@ export class MnemoriaCli {
     const lines = output.split("\n").filter((l) => l.trim());
 
     for (const line of lines) {
-      // Match: "1. [discovery] Some summary - 1771178444990"
-      const m = line.match(/^\d+\.\s+\[(\w+)]\s+(.+?)\s+-\s+(\d+)$/);
+      // Match: "1. [discovery] (build) Some summary - 1771178444990"
+      const m = line.match(/^\d+\.\s+\[(\w+)]\s+\((\w+)\)\s+(.+?)\s+-\s+(\d+)$/);
       if (m) {
         entries.push({
           id: "",
+          agent_name: m[2],
           entry_type: m[1] as EntryType,
-          summary: m[2],
+          summary: m[3],
           content: "",
-          timestamp: parseInt(m[3], 10),
+          timestamp: parseInt(m[4], 10),
           checksum: 0,
           prev_checksum: 0,
         });

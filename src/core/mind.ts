@@ -1,9 +1,10 @@
 /**
  * Mind — shared hive-mind memory manager.
  *
- * All agents share a single mnemoria store at `.opencode/memory/`. Each
- * memory entry is tagged with the agent that created it, so agents can
- * see each other's memories while still knowing who recorded what.
+ * All agents share a single mnemoria store at `.opencode/mnemoria/`. Each
+ * memory entry is tagged with the agent that created it via mnemoria's
+ * native `--agent` flag, so agents can see each other's memories while
+ * still knowing who recorded what.
  */
 
 import { join } from "node:path";
@@ -20,12 +21,6 @@ import {
   type TimelineOptions,
 } from "../types.js";
 import { generateId, estimateTokens } from "../utils/helpers.js";
-
-/** Parse an agent name from content that starts with "Agent: <name>\n". */
-function parseAgentFromContent(content: string): AgentName | undefined {
-  const match = content.match(/^Agent:\s*(\S+)/);
-  return match?.[1] as AgentName | undefined;
-}
 
 export class Mind {
   private cli: MnemoriaCli;
@@ -64,19 +59,15 @@ export class Mind {
 
   /**
    * Store a new observation, tagged with the agent that created it.
-   *
-   * The agent name is embedded in the content as an `Agent: <name>` line
-   * so it's indexed by the full-text engine and visible on retrieval.
    */
   async remember(input: {
     type: EntryType;
     summary: string;
     content: string;
-    agent?: AgentName;
+    agent: AgentName;
     tool?: string;
     metadata?: ObservationMetadata;
   }): Promise<string> {
-    // Build a rich content string for the mnemoria store.
     const parts: string[] = [input.content];
 
     if (input.tool) {
@@ -114,7 +105,7 @@ export class Mind {
     type: EntryType;
     summary: string;
     content: string;
-    agent?: AgentName;
+    agent: AgentName;
     tool?: string;
     metadata?: ObservationMetadata;
   }): Promise<string> {
@@ -136,7 +127,7 @@ export class Mind {
   async setIntent(
     message: string,
     extractedGoal: string,
-    agent?: AgentName
+    agent: AgentName
   ): Promise<string> {
     this.currentChainId = generateId();
     this.currentParentId = null;
@@ -153,32 +144,31 @@ export class Mind {
   }
 
   /**
-   * Search the shared memory. Results may come from any agent.
+   * Search the shared memory. Optionally filter by agent.
    */
-  async search(query: string, limit = 10): Promise<SearchResult[]> {
-    return this.cli.search(query, limit);
+  async search(query: string, limit = 10, agent?: AgentName): Promise<SearchResult[]> {
+    return this.cli.search(query, limit, agent);
   }
 
   /**
-   * Ask a question against the shared memory.
+   * Ask a question against the shared memory. Optionally filter by agent.
    */
-  async ask(question: string): Promise<string> {
-    return this.cli.ask(question);
+  async ask(question: string, agent?: AgentName): Promise<string> {
+    return this.cli.ask(question, agent);
   }
 
   /**
-   * Get a timeline of memories from all agents.
-   * The agent name is parsed from each entry's content.
+   * Get a timeline of memories. Optionally filter by agent.
    */
-  async timeline(options?: Partial<TimelineOptions>): Promise<Observation[]> {
-    const entries = await this.cli.timeline(options);
+  async timeline(options?: Partial<TimelineOptions>, agent?: AgentName): Promise<Observation[]> {
+    const entries = await this.cli.timeline(options, agent);
     return entries.map((e) => ({
       id: e.id,
       type: e.entry_type,
       summary: e.summary,
       content: e.content,
       timestamp: e.timestamp,
-      agent: parseAgentFromContent(e.content),
+      agent: e.agent_name as AgentName,
     }));
   }
 
@@ -201,14 +191,13 @@ export class Mind {
     const maxObs = this.config.maxContextObservations;
     const maxTokens = this.config.maxContextTokens;
 
-    // Get recent timeline entries
     const entries = await this.cli.timeline({ limit: maxObs, reverse: true });
 
     let tokenCount = 0;
     const recentObservations: Observation[] = [];
 
     for (const entry of entries) {
-      const text = `[${entry.entry_type}] ${entry.summary}`;
+      const text = `[${entry.entry_type}] (${entry.agent_name}) ${entry.summary}`;
       const tokens = estimateTokens(text);
       if (tokenCount + tokens > maxTokens) break;
       tokenCount += tokens;
@@ -219,11 +208,10 @@ export class Mind {
         summary: entry.summary,
         content: entry.content,
         timestamp: entry.timestamp,
-        agent: parseAgentFromContent(entry.content),
+        agent: entry.agent_name as AgentName,
       });
     }
 
-    // Optionally search for relevant memories
     let relevantMemories: SearchResult[] = [];
     if (query) {
       relevantMemories = await this.cli.search(query, 5);

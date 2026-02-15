@@ -2,9 +2,9 @@
  * oc-mnemoria — OpenCode Plugin
  *
  * Persistent shared memory ("hive mind") for OpenCode agents, powered by
- * the mnemoria Rust engine. All agents share a single memory store — each
- * entry is tagged with the agent that created it so agents can see each
- * other's context while knowing who recorded what.
+ * the mnemoria Rust engine (v0.3.1+). All agents share a single memory
+ * store — each entry is tagged with the agent that created it via
+ * mnemoria's native --agent flag.
  */
 
 import type { Plugin, PluginInput } from "@opencode-ai/plugin";
@@ -31,7 +31,6 @@ function getSessionAgent(sessionID?: string): AgentName {
 }
 
 const OcMnemoria: Plugin = async (_input: PluginInput) => {
-  // Check that the mnemoria binary is available
   const available = await MnemoriaCli.isAvailable();
   if (!available) {
     console.error(
@@ -47,7 +46,7 @@ const OcMnemoria: Plugin = async (_input: PluginInput) => {
       remember: tool({
         description:
           "Store important information in the shared memory for future sessions. " +
-          "All agents share one memory store — entries are tagged with the agent that created them.",
+          "All agents share one memory store — entries are tagged with the creating agent.",
         args: {
           type: tool.schema
             .enum([
@@ -77,8 +76,7 @@ const OcMnemoria: Plugin = async (_input: PluginInput) => {
             type: args.type as EntryType,
             summary: args.summary,
             content: args.content,
-            // Agent is not known from the tool context; it will be set
-            // by the hook-based auto-capture path instead.
+            agent: DEFAULT_AGENT,
           });
           return `Stored in memory: ${args.summary} (id: ${id})`;
         },
@@ -87,7 +85,7 @@ const OcMnemoria: Plugin = async (_input: PluginInput) => {
       search_memory: tool({
         description:
           "Search the shared memory using keyword or semantic search. " +
-          "Results may come from any agent. " +
+          "Results may come from any agent unless filtered. " +
           "Do NOT use wildcards like * — only search for specific topics or keywords.",
         args: {
           query: tool.schema
@@ -99,6 +97,12 @@ const OcMnemoria: Plugin = async (_input: PluginInput) => {
             .number()
             .optional()
             .describe("Maximum results (default: 10)"),
+          agent: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "Filter results to a specific agent (plan, build, ask, review). If omitted, searches all agents."
+            ),
         },
         async execute(args) {
           if (args.query.includes("*")) {
@@ -106,7 +110,11 @@ const OcMnemoria: Plugin = async (_input: PluginInput) => {
           }
 
           const mind = await getMind();
-          const results = await mind.search(args.query, args.limit ?? 10);
+          const results = await mind.search(
+            args.query,
+            args.limit ?? 10,
+            args.agent as AgentName | undefined
+          );
 
           if (results.length === 0) {
             return "No memories found matching that query.";
@@ -115,7 +123,7 @@ const OcMnemoria: Plugin = async (_input: PluginInput) => {
           const output = results
             .map(
               (r, i) =>
-                `${i + 1}. [${r.entry.entry_type}] ${r.entry.summary}\n   Score: ${r.score.toFixed(2)}`
+                `${i + 1}. [${r.entry.entry_type}] (${r.entry.agent_name}) ${r.entry.summary}\n   Score: ${r.score.toFixed(2)}`
             )
             .join("\n\n");
 
@@ -130,10 +138,19 @@ const OcMnemoria: Plugin = async (_input: PluginInput) => {
           question: tool.schema
             .string()
             .describe("Question to ask about past interactions"),
+          agent: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "Filter to a specific agent's memories (plan, build, ask, review). If omitted, searches all."
+            ),
         },
         async execute(args) {
           const mind = await getMind();
-          return await mind.ask(args.question);
+          return await mind.ask(
+            args.question,
+            args.agent as AgentName | undefined
+          );
         },
       }),
 
@@ -157,7 +174,7 @@ const OcMnemoria: Plugin = async (_input: PluginInput) => {
       timeline: tool({
         description:
           "Get memories in chronological order from the shared store. " +
-          "Entries from all agents are shown, each tagged with the agent that created it.",
+          "Entries from all agents are shown unless filtered.",
         args: {
           limit: tool.schema
             .number()
@@ -175,15 +192,24 @@ const OcMnemoria: Plugin = async (_input: PluginInput) => {
             .boolean()
             .optional()
             .describe("Reverse order (newest first, default: true)"),
+          agent: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "Filter to a specific agent (plan, build, ask, review). If omitted, shows all."
+            ),
         },
         async execute(args) {
           const mind = await getMind();
-          const observations = await mind.timeline({
-            limit: args.limit ?? 20,
-            since: args.since,
-            until: args.until,
-            reverse: args.reverse ?? true,
-          });
+          const observations = await mind.timeline(
+            {
+              limit: args.limit ?? 20,
+              since: args.since,
+              until: args.until,
+              reverse: args.reverse ?? true,
+            },
+            args.agent as AgentName | undefined
+          );
 
           if (observations.length === 0) {
             return "No memories found in timeline.";
@@ -253,7 +279,6 @@ const OcMnemoria: Plugin = async (_input: PluginInput) => {
         const agentName =
           (hookInput.agent as AgentName) || DEFAULT_AGENT;
 
-        // Track which agent is active for this session
         sessionAgentMap.set(sessionID, agentName);
 
         const message = hookOutput.message;
@@ -295,7 +320,7 @@ const OcMnemoria: Plugin = async (_input: PluginInput) => {
           "",
           "## Memory Guidance",
           "You have access to a persistent shared memory (hive mind). All agents (plan, build, ask, review) share one memory store.",
-          "Each entry is tagged with the agent that created it, so you can see who recorded what.",
+          "Each entry is tagged with the agent that created it. You can filter by agent when searching or viewing the timeline.",
           "",
           "Before responding to the user:",
           "1. Consider if past sessions contain relevant context — use 'search_memory' to find related memories",
