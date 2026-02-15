@@ -42,38 +42,88 @@ BM25 + semantic search, CRC32 checksum chains, and corruption recovery.
 
 ## Installation
 
+The easiest way to install oc-mnemoria in a project is to run the install script:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/one-bit/oc-mnemoria/main/install.sh | sh
+```
+
+The script installs the `mnemoria` CLI (if needed), configures a compatibility
+plugin setup for current OpenCode behavior, and installs `/memory` slash
+commands.
+
+---
+
+If you prefer to install manually:
+
 ### 1. Install the mnemoria CLI
 
 ```sh
 cargo install mnemoria
 ```
 
-### 2. Add the plugin to your project
+### 2. Add the plugin (recommended compatibility setup)
 
-Add `oc-mnemoria/plugin` to the `plugin` array in your `opencode.json`:
+This method avoids current OpenCode npm plugin loader edge-cases and works on
+versions where direct npm plugin config fails with errors like:
+
+- `BunInstallFailedError` for `oc-mnemoria/plugin`
+- `TypeError: fn is not a function`
+
+Create these files in your project:
+
+`opencode.json`
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json"
+}
+```
+
+`.opencode/package.json`
+
+```json
+{
+  "dependencies": {
+    "oc-mnemoria": "latest"
+  }
+}
+```
+
+`.opencode/plugins/oc-mnemoria.js`
+
+```js
+import OcMnemoria from "oc-mnemoria/plugin"
+
+export const OcMnemoriaPlugin = async (ctx) => OcMnemoria(ctx)
+```
+
+Then restart OpenCode.
+
+### 3. Alternative: direct npm plugin config
+
+If your OpenCode version supports loading `oc-mnemoria` directly, use:
 
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["oc-mnemoria/plugin"]
+  "plugin": ["oc-mnemoria"]
 }
 ```
 
-> **Important:** You must use `"oc-mnemoria/plugin"`, not `"oc-mnemoria"`.
-> The bare package name resolves to the main entry point which re-exports
-> helpers, constants, and classes alongside the plugin function. OpenCode's
-> plugin loader iterates over every export and tries to call each one as a
-> plugin initializer, so non-function exports like `DEFAULT_CONFIG` cause a
-> `TypeError: fn is not a function` crash. The `/plugin` subpath exports only
-> the plugin function and avoids this issue.
+If you see either error above, switch to the compatibility install in Step 2.
 
-Or use the install script:
+### 4. Verify installation
+
+After restarting OpenCode, run:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/one-bit/oc-mnemoria/main/install.sh | bash
+/memory stats
 ```
 
-### 3. Install slash commands (optional)
+You should see memory store statistics (entry count, file size, timestamps).
+
+### 5. Install slash commands (optional)
 
 Copy the `commands/` directory to your OpenCode config:
 

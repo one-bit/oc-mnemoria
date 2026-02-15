@@ -1,9 +1,13 @@
-#!/bin/bash
+#!/bin/sh
 set -e
 
 REPO="one-bit/oc-mnemoria"
 COMMANDS_DIR="commands"
 CONFIG_FILE="opencode.json"
+PROJECT_DIR="$(pwd)"
+OPENCODE_DIR="$PROJECT_DIR/.opencode"
+PACKAGE_FILE="$OPENCODE_DIR/package.json"
+PLUGIN_FILE="$OPENCODE_DIR/plugins/oc-mnemoria.js"
 
 echo "=========================================="
 echo "  oc-mnemoria Installer"
@@ -14,9 +18,9 @@ echo ""
 
 echo "0. Checking prerequisites..."
 
-if ! command -v mnemoria &> /dev/null; then
+if ! command -v mnemoria >/dev/null 2>&1; then
     echo "   'mnemoria' CLI not found."
-    if command -v cargo &> /dev/null; then
+    if command -v cargo >/dev/null 2>&1; then
         echo "   Installing via cargo..."
         cargo install mnemoria
     else
@@ -26,75 +30,90 @@ if ! command -v mnemoria &> /dev/null; then
         exit 1
     fi
 else
-    echo "   mnemoria CLI found: $(which mnemoria)"
+    echo "   mnemoria CLI found: $(command -v mnemoria)"
 fi
 echo ""
 
-# ── Step 1: Configure plugin ─────────────────────────────────────────────────
+# ── Step 1: Configure compatibility plugin setup ────────────────────────────
 
-detect_config_path() {
-    local cwd=$(pwd)
-    if [ -f "$cwd/$CONFIG_FILE" ]; then
-        echo "$cwd/$CONFIG_FILE"
-    elif [ -f "$HOME/.config/opencode/opencode.json" ]; then
-        echo "$HOME/.config/opencode/opencode.json"
-    elif [ -f "$HOME/.opencode/opencode.json" ]; then
-        echo "$HOME/.opencode/opencode.json"
-    else
-        echo ""
-    fi
+ensure_project_config() {
+    if [ ! -f "$PROJECT_DIR/$CONFIG_FILE" ]; then
+        echo "   Creating $CONFIG_FILE in current directory..."
+        cat > "$PROJECT_DIR/$CONFIG_FILE" <<'EOF'
+{
+  "$schema": "https://opencode.ai/config.json"
 }
-
-add_plugin_to_config() {
-    local config_path="$1"
-
-    if [ -z "$config_path" ] || [ ! -f "$config_path" ]; then
-        echo "   Creating new opencode.json in current directory..."
-        config_path="$CONFIG_FILE"
-        echo '{
-  "$schema": "https://opencode.ai/config.json",
-  "plugin": ["oc-mnemoria/plugin"]
-}' > "$config_path"
-        echo "   Created $config_path"
+EOF
+        echo "   Created $PROJECT_DIR/$CONFIG_FILE"
         return
     fi
 
-    if grep -q '"oc-mnemoria/plugin"' "$config_path" 2>/dev/null; then
-        echo "   Plugin already configured in $config_path"
-        return
-    fi
-
-    if command -v jq &> /dev/null; then
-        if jq -e '.plugin' "$config_path" > /dev/null 2>&1; then
-            jq '
-              .plugin = (
-                (if (.plugin | type) == "array" then .plugin else [.plugin] end)
-                | map(if . == "@oc-mnemoria/plugin" or . == "oc-mnemoria" then "oc-mnemoria/plugin" else . end)
-                | . + (if index("oc-mnemoria/plugin") == null then ["oc-mnemoria/plugin"] else [] end)
-                | unique
-              )
-            ' "$config_path" > "$config_path.tmp" && mv "$config_path.tmp" "$config_path"
-            echo "   Ensured oc-mnemoria/plugin is configured in $config_path"
-        else
-            jq '. + {plugin: ["oc-mnemoria/plugin"]}' "$config_path" > "$config_path.tmp" && mv "$config_path.tmp" "$config_path"
-            echo "   Added plugin array with oc-mnemoria/plugin to $config_path"
-        fi
+    if command -v jq >/dev/null 2>&1; then
+        jq '
+          if (.plugin? | type) == "array" then
+            .plugin = (.plugin | map(select(. != "oc-mnemoria" and . != "oc-mnemoria/plugin" and . != "@oc-mnemoria/plugin")))
+            | if (.plugin | length) == 0 then del(.plugin) else . end
+          else
+            .
+          end
+        ' "$PROJECT_DIR/$CONFIG_FILE" > "$PROJECT_DIR/$CONFIG_FILE.tmp" && mv "$PROJECT_DIR/$CONFIG_FILE.tmp" "$PROJECT_DIR/$CONFIG_FILE"
+        echo "   Ensured no conflicting oc-mnemoria entries in $PROJECT_DIR/$CONFIG_FILE"
+    elif grep -q 'oc-mnemoria' "$PROJECT_DIR/$CONFIG_FILE" 2>/dev/null; then
+        echo "   Warning: jq not found and $CONFIG_FILE may still contain plugin entries."
+        echo "   Please remove any plugin entries for oc-mnemoria from $CONFIG_FILE if OpenCode fails to start."
     else
-        echo "   jq not found. Please manually add \"oc-mnemoria/plugin\" to the plugin array in $config_path"
+        echo "   Found existing $CONFIG_FILE"
     fi
 }
 
-echo "1. Configuring plugin..."
-config_path=$(detect_config_path)
-add_plugin_to_config "$config_path"
+ensure_local_dependency() {
+    mkdir -p "$OPENCODE_DIR"
+
+    if [ ! -f "$PACKAGE_FILE" ]; then
+        cat > "$PACKAGE_FILE" <<'EOF'
+{
+  "dependencies": {
+    "oc-mnemoria": "latest"
+  }
+}
+EOF
+        echo "   Created $PACKAGE_FILE"
+        return
+    fi
+
+    if command -v jq >/dev/null 2>&1; then
+        jq '.dependencies = ((.dependencies // {}) + {"oc-mnemoria": "latest"})' "$PACKAGE_FILE" > "$PACKAGE_FILE.tmp" && mv "$PACKAGE_FILE.tmp" "$PACKAGE_FILE"
+        echo "   Ensured oc-mnemoria dependency in $PACKAGE_FILE"
+    elif grep -q '"oc-mnemoria"' "$PACKAGE_FILE" 2>/dev/null; then
+        echo "   Found oc-mnemoria dependency in $PACKAGE_FILE"
+    else
+        echo "   Warning: jq not found and $PACKAGE_FILE exists without oc-mnemoria dependency."
+        echo "   Please add: \"oc-mnemoria\": \"latest\" under dependencies."
+    fi
+}
+
+ensure_wrapper_plugin() {
+    mkdir -p "$OPENCODE_DIR/plugins"
+    cat > "$PLUGIN_FILE" <<'EOF'
+import OcMnemoria from "oc-mnemoria/plugin"
+
+export const OcMnemoriaPlugin = async (ctx) => OcMnemoria(ctx)
+EOF
+    echo "   Wrote compatibility wrapper plugin to $PLUGIN_FILE"
+}
+
+echo "1. Configuring compatibility plugin setup..."
+ensure_project_config
+ensure_local_dependency
+ensure_wrapper_plugin
 echo ""
 
 # ── Step 2: Install commands ─────────────────────────────────────────────────
 
 install_commands() {
-    local cwd=$(pwd)
-    local script_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
-    local commands_source=""
+    cwd="$(pwd)"
+    script_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+    commands_source=""
 
     if [ -d "$cwd/$COMMANDS_DIR" ]; then
         commands_source="$cwd/$COMMANDS_DIR"
@@ -106,12 +125,12 @@ install_commands() {
 
     if [ -z "$commands_source" ]; then
         echo "   Downloading commands from GitHub..."
-        local temp_dir=$(mktemp -d)
+        temp_dir="$(mktemp -d)"
         curl -sSL "https://github.com/$REPO/archive/refs/heads/main.tar.gz" | tar -xz -C "$temp_dir"
         commands_source="$temp_dir/oc-mnemoria-main/commands"
     fi
 
-    local target_dir="$HOME/.config/opencode/commands"
+    target_dir="$HOME/.config/opencode/commands"
     mkdir -p "$target_dir"
 
     if [ -d "$commands_source" ]; then
@@ -131,6 +150,11 @@ echo ""
 echo "=========================================="
 echo "  Installation complete!"
 echo "=========================================="
+echo ""
+echo "Installed compatibility setup for current OpenCode plugin behavior:"
+echo "  - $PROJECT_DIR/$CONFIG_FILE"
+echo "  - $PACKAGE_FILE"
+echo "  - $PLUGIN_FILE"
 echo ""
 echo "Next steps:"
 echo "  1. Restart OpenCode"
