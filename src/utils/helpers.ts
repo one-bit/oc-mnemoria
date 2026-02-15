@@ -95,7 +95,7 @@ function extractFileReadInfo(
   output: string,
   args?: Record<string, unknown>
 ): ExtractedInfo {
-  const filePath = (args?.path as string) || (args?.file as string) || "unknown";
+  const filePath = getArgFilePath(args);
   const lines = output.split("\n");
   const lineCount = lines.length;
 
@@ -167,7 +167,7 @@ function extractEditInfo(
   output: string,
   args?: Record<string, unknown>
 ): ExtractedInfo {
-  const filePath = (args?.path as string) || (args?.file as string) || "unknown";
+  const filePath = getArgFilePath(args);
   const isNew = /created|new file/i.test(output);
 
   return {
@@ -183,7 +183,7 @@ function extractWriteInfo(
   output: string,
   args?: Record<string, unknown>
 ): ExtractedInfo {
-  const filePath = (args?.path as string) || (args?.file as string) || "unknown";
+  const filePath = getArgFilePath(args);
 
   return {
     summary: `Wrote file: ${filePath.split("/").pop()}`,
@@ -192,6 +192,14 @@ function extractWriteInfo(
     findings: [],
     patterns: [],
   };
+}
+
+function getArgFilePath(args?: Record<string, unknown>): string {
+  const filePath =
+    (args?.filePath as string | undefined) ||
+    (args?.path as string | undefined) ||
+    (args?.file as string | undefined);
+  return filePath || "unknown";
 }
 
 function extractSearchInfo(

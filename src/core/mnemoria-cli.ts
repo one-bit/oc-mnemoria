@@ -22,6 +22,8 @@ const MNEMORIA_BIN = "mnemoria";
 const MAX_RETRIES = 2;
 /** Base delay (ms) between retries (doubled each attempt). */
 const RETRY_BASE_DELAY_MS = 100;
+/** TTL (ms) for full-store export cache used by enrichment. */
+const EXPORT_CACHE_TTL_MS = 2_000;
 
 /**
  * Execute a mnemoria CLI command and return stdout.
@@ -78,6 +80,8 @@ async function run(
  */
 export class MnemoriaCli {
   private _ready = false;
+  private exportCache: { expiresAt: number; entries: MemoryEntry[] } | null = null;
+  private exportInFlight: Promise<MemoryEntry[]> | null = null;
 
   constructor(public readonly basePath: string) {}
 
@@ -143,6 +147,7 @@ export class MnemoriaCli {
       summary,
       content,
     ]);
+    this.invalidateExportCache();
     // Output: "Added entry: <uuid>"
     const match = output.match(/Added entry:\s+(.+)/);
     return match?.[1]?.trim() ?? output;
@@ -179,7 +184,7 @@ export class MnemoriaCli {
     for (const line of lines) {
       // More flexible regex: allows variable whitespace and optional trailing content
       const m = line.match(
-        /^\d+\.\s+\[(\w+)]\s+\((\w+)\)\s+(.+?)\s+\(score:\s*([\d.]+)\)\s*$/
+        /^\d+\.\s+\[([^\]]+)]\s+\(([^)]+)\)\s+(.+?)\s+\(score:\s*([\d.]+)\)\s*$/
       );
       if (m) {
         results.push({
@@ -197,6 +202,13 @@ export class MnemoriaCli {
           score: parseFloat(m[4]),
         });
       }
+    }
+
+    const dataLines = lines.filter((line) => /^\d+\./.test(line));
+    if (dataLines.length > 0 && results.length === 0) {
+      console.error(
+        "[oc-mnemoria] Warning: Search output was non-empty but no lines were parsed. CLI output format may have changed."
+      );
     }
 
     return results;
@@ -266,7 +278,7 @@ export class MnemoriaCli {
 
     for (const line of lines) {
       // More flexible regex: allows variable whitespace around the dash separator
-      const m = line.match(/^\d+\.\s+\[(\w+)]\s+\((\w+)\)\s+(.+?)\s+-\s*(\d+)\s*$/);
+      const m = line.match(/^\d+\.\s+\[([^\]]+)]\s+\(([^)]+)\)\s+(.+?)\s+-\s*(\d+)\s*$/);
       if (m) {
         entries.push({
           id: "",
@@ -279,6 +291,13 @@ export class MnemoriaCli {
           prev_checksum: 0,
         });
       }
+    }
+
+    const dataLines = lines.filter((line) => /^\d+\./.test(line));
+    if (dataLines.length > 0 && entries.length === 0) {
+      console.error(
+        "[oc-mnemoria] Warning: Timeline output was non-empty but no lines were parsed. CLI output format may have changed."
+      );
     }
 
     return entries;
@@ -310,7 +329,7 @@ export class MnemoriaCli {
   async enrichSearchResults(results: SearchResult[]): Promise<SearchResult[]> {
     if (results.length === 0) return results;
     try {
-      const allEntries = await this.exportAll();
+      const allEntries = await this.getAllEntriesCached();
       const lookup = new Map<string, MemoryEntry>();
       for (const entry of allEntries) {
         // Key by summary + agent + type for best matching
@@ -341,7 +360,7 @@ export class MnemoriaCli {
   async enrichTimelineEntries(entries: MemoryEntry[]): Promise<MemoryEntry[]> {
     if (entries.length === 0) return entries;
     try {
-      const allEntries = await this.exportAll();
+      const allEntries = await this.getAllEntriesCached();
       const lookup = new Map<string, MemoryEntry>();
       for (const entry of allEntries) {
         // Key by summary + agent + timestamp for best matching
@@ -378,6 +397,7 @@ export class MnemoriaCli {
 
     // Reset the cached ready state since the store was deleted
     this._ready = false;
+    this.invalidateExportCache();
     await this.init();
 
     // Re-add all entries
@@ -398,5 +418,34 @@ export class MnemoriaCli {
     await this.ensureReady();
     const output = await run(["--path", this.basePath, "verify"]);
     return output.includes("passed");
+  }
+
+  private invalidateExportCache(): void {
+    this.exportCache = null;
+  }
+
+  private async getAllEntriesCached(): Promise<MemoryEntry[]> {
+    const now = Date.now();
+    if (this.exportCache && this.exportCache.expiresAt > now) {
+      return this.exportCache.entries;
+    }
+
+    if (this.exportInFlight) {
+      return this.exportInFlight;
+    }
+
+    this.exportInFlight = this.exportAll()
+      .then((entries) => {
+        this.exportCache = {
+          entries,
+          expiresAt: Date.now() + EXPORT_CACHE_TTL_MS,
+        };
+        return entries;
+      })
+      .finally(() => {
+        this.exportInFlight = null;
+      });
+
+    return this.exportInFlight;
   }
 }

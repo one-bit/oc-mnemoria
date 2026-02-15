@@ -75,12 +75,18 @@ function recordHookSuccess(): void {
 
 function recordHookFailure(): void {
   hookFailureCount++;
-  if (hookFailureCount >= BREAKER_THRESHOLD && breakerOpenedAt === 0) {
-    breakerOpenedAt = Date.now();
-    console.error(
-      `[oc-mnemoria] Circuit breaker opened after ${BREAKER_THRESHOLD} consecutive failures. ` +
-        `Hooks will skip CLI calls for ${BREAKER_RESET_MS / 1000}s.`
-    );
+  if (hookFailureCount >= BREAKER_THRESHOLD) {
+    const now = Date.now();
+    const shouldOpen =
+      breakerOpenedAt === 0 || now - breakerOpenedAt >= BREAKER_RESET_MS;
+
+    if (shouldOpen) {
+      breakerOpenedAt = now;
+      console.error(
+        `[oc-mnemoria] Circuit breaker opened after ${BREAKER_THRESHOLD} consecutive failures. ` +
+          `Hooks will skip CLI calls for ${BREAKER_RESET_MS / 1000}s.`
+      );
+    }
   }
 }
 
@@ -291,18 +297,37 @@ const OcMnemoria: Plugin = async (_input: PluginInput) => {
           "this records a marker rather than physically deleting. Use this when " +
           "a previously stored memory is incorrect, outdated, or no longer relevant.",
         args: {
+          id: tool.schema
+            .string()
+            .optional()
+            .describe("Entry ID to forget (recommended; avoids summary collisions)"),
           summary: tool.schema
             .string()
+            .optional()
             .describe("The summary of the memory to forget (should match the original)"),
           reason: tool.schema
             .string()
             .describe("Why this memory should be forgotten"),
         },
         async execute(args, context) {
+          if (!args.id && !args.summary) {
+            return "Error: Provide either 'id' (recommended) or 'summary' to forget a memory.";
+          }
+
           const mind = await getMind();
           const agentName = (context.agent as AgentName) || DEFAULT_AGENT;
-          const id = await mind.forget(args.summary, args.reason, agentName);
-          return `Marked as forgotten (${agentName}): ${args.summary} (marker id: ${id})`;
+          const result = await mind.forget(
+            {
+              id: args.id as string | undefined,
+              summary: args.summary as string | undefined,
+            },
+            args.reason,
+            agentName
+          );
+          return (
+            `Marked as forgotten (${agentName}): ${result.forgottenSummary} ` +
+            `(id: ${result.forgottenId}, marker id: ${result.markerId})`
+          );
         },
       }),
     },

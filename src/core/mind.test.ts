@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { MemoryStats } from "../types.js";
+import type { MemoryEntry, MemoryStats } from "../types.js";
 
 // Mock MnemoriaCli — must use a proper constructor function (not arrow fn)
 vi.mock("./mnemoria-cli.js", () => {
@@ -31,6 +31,12 @@ vi.mock("./mnemoria-cli.js", () => {
 });
 
 import { Mind, getMind, resetMind } from "./mind.js";
+
+interface CliMock {
+  add: ReturnType<typeof vi.fn>;
+  exportAll: ReturnType<typeof vi.fn>;
+  rebuild: ReturnType<typeof vi.fn>;
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -182,6 +188,176 @@ describe("stats", () => {
     const stats = await mind.stats();
     expect(stats.total_entries).toBe(5);
     expect(stats.file_size_bytes).toBe(1024);
+  });
+});
+
+// ─── forget / compact ───────────────────────────────────────────────────────
+
+describe("forget", () => {
+  it("forgets by id and records an ID-based marker", async () => {
+    const mind = await Mind.open();
+    const cli = (mind as unknown as { cli: CliMock }).cli;
+
+    const entries: MemoryEntry[] = [
+      {
+        id: "entry-123",
+        agent_name: "build",
+        entry_type: "discovery",
+        summary: "Found flaky test",
+        content: "details",
+        timestamp: 1700000000000,
+        checksum: 0,
+        prev_checksum: 0,
+      },
+    ];
+    cli.exportAll.mockResolvedValue(entries);
+    cli.add.mockResolvedValue("marker-001");
+
+    const result = await mind.forget(
+      { id: "entry-123" },
+      "obsolete",
+      "build"
+    );
+
+    expect(result).toEqual({
+      markerId: "marker-001",
+      forgottenId: "entry-123",
+      forgottenSummary: "Found flaky test",
+    });
+    expect(cli.add).toHaveBeenCalledWith(
+      "warning",
+      "[FORGOTTEN] entry-123",
+      expect.stringContaining("Original id: entry-123"),
+      "build"
+    );
+  });
+
+  it("rejects ambiguous summary matches", async () => {
+    const mind = await Mind.open();
+    const cli = (mind as unknown as { cli: CliMock }).cli;
+
+    const entries: MemoryEntry[] = [
+      {
+        id: "entry-a",
+        agent_name: "build",
+        entry_type: "discovery",
+        summary: "duplicate summary",
+        content: "a",
+        timestamp: 1,
+        checksum: 0,
+        prev_checksum: 0,
+      },
+      {
+        id: "entry-b",
+        agent_name: "plan",
+        entry_type: "discovery",
+        summary: "duplicate summary",
+        content: "b",
+        timestamp: 2,
+        checksum: 0,
+        prev_checksum: 0,
+      },
+    ];
+    cli.exportAll.mockResolvedValue(entries);
+
+    await expect(
+      mind.forget({ summary: "duplicate summary" }, "obsolete", "build")
+    ).rejects.toThrow("Summary is ambiguous");
+  });
+});
+
+describe("compact", () => {
+  it("removes forgotten entries by ID and keeps unrelated entries", async () => {
+    const mind = await Mind.open();
+    const cli = (mind as unknown as { cli: CliMock }).cli;
+
+    const entries: MemoryEntry[] = [
+      {
+        id: "entry-1",
+        agent_name: "build",
+        entry_type: "discovery",
+        summary: "to remove",
+        content: "x",
+        timestamp: 100,
+        checksum: 0,
+        prev_checksum: 0,
+      },
+      {
+        id: "entry-2",
+        agent_name: "build",
+        entry_type: "discovery",
+        summary: "to keep",
+        content: "y",
+        timestamp: 101,
+        checksum: 0,
+        prev_checksum: 0,
+      },
+      {
+        id: "marker-1",
+        agent_name: "build",
+        entry_type: "warning",
+        summary: "[FORGOTTEN] entry-1",
+        content: "Reason: stale\nOriginal id: entry-1\nOriginal summary: to remove",
+        timestamp: 102,
+        checksum: 0,
+        prev_checksum: 0,
+      },
+    ];
+    cli.exportAll.mockResolvedValue(entries);
+
+    const result = await mind.compact();
+
+    expect(result).toEqual({ kept: 1, removed: 2 });
+    expect(cli.rebuild).toHaveBeenCalledTimes(1);
+    expect(cli.rebuild).toHaveBeenCalledWith([
+      expect.objectContaining({ id: "entry-2", summary: "to keep" }),
+    ]);
+  });
+
+  it("supports legacy summary-only forgotten markers", async () => {
+    const mind = await Mind.open();
+    const cli = (mind as unknown as { cli: CliMock }).cli;
+
+    const entries: MemoryEntry[] = [
+      {
+        id: "entry-legacy-target",
+        agent_name: "build",
+        entry_type: "discovery",
+        summary: "legacy target",
+        content: "old",
+        timestamp: 200,
+        checksum: 0,
+        prev_checksum: 0,
+      },
+      {
+        id: "entry-legacy-keep",
+        agent_name: "build",
+        entry_type: "discovery",
+        summary: "legacy keep",
+        content: "new",
+        timestamp: 201,
+        checksum: 0,
+        prev_checksum: 0,
+      },
+      {
+        id: "marker-legacy",
+        agent_name: "build",
+        entry_type: "warning",
+        summary: "[FORGOTTEN] legacy target",
+        content: "Reason: old flow\nOriginal summary: legacy target",
+        timestamp: 202,
+        checksum: 0,
+        prev_checksum: 0,
+      },
+    ];
+    cli.exportAll.mockResolvedValue(entries);
+
+    const result = await mind.compact();
+
+    expect(result).toEqual({ kept: 1, removed: 2 });
+    expect(cli.rebuild).toHaveBeenCalledWith([
+      expect.objectContaining({ id: "entry-legacy-keep", summary: "legacy keep" }),
+    ]);
   });
 });
 

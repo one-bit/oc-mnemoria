@@ -57,7 +57,18 @@ vi.mock("./core/mnemoria-cli.js", () => {
       newest_timestamp: 1700001000000,
     } satisfies MemoryStats);
     this.timeline = vi.fn().mockResolvedValue([]);
-    this.exportAll = vi.fn().mockResolvedValue([]);
+    this.exportAll = vi.fn().mockResolvedValue([
+      {
+        id: "entry-123",
+        agent_name: "build",
+        entry_type: "discovery",
+        summary: "Known memory",
+        content: "details",
+        timestamp: 1700000000000,
+        checksum: 0,
+        prev_checksum: 0,
+      },
+    ]);
     this.verify = vi.fn().mockResolvedValue(true);
     this.rebuild = vi.fn().mockResolvedValue(undefined);
     this.enrichSearchResults = vi.fn().mockImplementation((results: unknown[]) => Promise.resolve(results));
@@ -211,6 +222,31 @@ describe("timeline tool", () => {
     const tools = result.tool ?? {};
     const output = await tools.timeline.execute({}, mockContext());
     expect(output).toContain("No memories found");
+  });
+});
+
+describe("forget tool", () => {
+  it("returns a validation error when id and summary are missing", async () => {
+    const result = await OcMnemoria({} as never);
+    const tools = result.tool ?? {};
+    const output = await tools.forget.execute(
+      { reason: "outdated" },
+      mockContext()
+    );
+    expect(output).toContain("Provide either 'id' (recommended) or 'summary'");
+  });
+
+  it("forgets a memory by id", async () => {
+    const result = await OcMnemoria({} as never);
+    const tools = result.tool ?? {};
+    const output = await tools.forget.execute(
+      { id: "entry-123", reason: "outdated" },
+      mockContext("build")
+    );
+    expect(output).toContain("Marked as forgotten (build)");
+    expect(output).toContain("Known memory");
+    expect(output).toContain("id: entry-123");
+    expect(output).toContain("marker id: entry-001");
   });
 });
 

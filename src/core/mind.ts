@@ -13,6 +13,7 @@ import {
   DEFAULT_CONFIG,
   type AgentName,
   type EntryType,
+  type MemoryEntry,
   type MemoryStats,
   type Observation,
   type ObservationMetadata,
@@ -178,16 +179,30 @@ export class Mind {
 
     this.flushing = true;
     const batch = this.batchQueue.splice(0);
+    let nextIndex = 0;
 
     try {
       // Write all entries sequentially (mnemoria uses file locks)
-      for (const obs of batch) {
+      for (; nextIndex < batch.length; nextIndex++) {
+        const obs = batch[nextIndex];
         await this.cli.add(obs.type, obs.summary, obs.content, obs.agent);
       }
     } catch (err) {
+      // Re-queue entries that were not written yet so observations are not lost.
+      const remaining = batch.slice(nextIndex);
+      if (remaining.length > 0) {
+        this.batchQueue.unshift(...remaining);
+      }
       console.error(`[oc-mnemoria] Failed to flush batch (${batch.length} entries):`, err);
     } finally {
       this.flushing = false;
+
+      // If new observations were queued while flushing, ensure another flush runs.
+      if (this.batchQueue.length > 0 && !this.batchTimer) {
+        this.batchTimer = setTimeout(() => {
+          void this.flushBatch();
+        }, BATCH_FLUSH_DELAY_MS);
+      }
     }
   }
 
@@ -223,16 +238,33 @@ export class Mind {
    * Mark a memory as forgotten/obsolete.
    *
    * Since the store is append-only, this records a "forgotten" marker
-   * entry rather than physically deleting. The marker contains the
-   * summary of the forgotten entry so context injection can filter it.
+   * entry rather than physically deleting. Markers are ID-based to avoid
+   * accidental deletion when multiple entries share the same summary.
    */
-  async forget(summary: string, reason: string, agent: AgentName): Promise<string> {
-    return this.cli.add(
+  async forget(
+    target: { id?: string; summary?: string },
+    reason: string,
+    agent: AgentName
+  ): Promise<{ markerId: string; forgottenId: string; forgottenSummary: string }> {
+    if (!target.id && !target.summary) {
+      throw new Error("forget requires either an entry id or summary");
+    }
+
+    const allEntries = await this.cli.exportAll();
+    const entry = this.resolveForgetTarget(allEntries, target);
+
+    const markerId = await this.cli.add(
       "warning",
-      `[FORGOTTEN] ${summary.slice(0, 80)}`,
-      `Reason: ${reason}\nOriginal summary: ${summary}`,
+      `[FORGOTTEN] ${entry.id}`,
+      `Reason: ${reason}\nOriginal id: ${entry.id}\nOriginal summary: ${entry.summary}`,
       agent
     );
+
+    return {
+      markerId,
+      forgottenId: entry.id,
+      forgottenSummary: entry.summary,
+    };
   }
 
   /**
@@ -326,12 +358,25 @@ export class Mind {
   async compact(maxAgeDays?: number): Promise<{ kept: number; removed: number }> {
     const allEntries = await this.cli.exportAll();
 
-    // Collect summaries that have been marked as forgotten
+    // Collect entries that have been marked as forgotten.
+    const forgottenIds = new Set<string>();
     const forgottenSummaries = new Set<string>();
     for (const entry of allEntries) {
       if (entry.summary.startsWith("[FORGOTTEN] ")) {
+        const idFromSummary = entry.summary
+          .slice("[FORGOTTEN] ".length)
+          .trim();
+        if (idFromSummary) {
+          forgottenIds.add(idFromSummary);
+        }
+
+        const originalId = entry.content.match(/Original id:\s*(\S+)/);
+        if (originalId?.[1]) {
+          forgottenIds.add(originalId[1].trim());
+        }
+
         const original = entry.content.match(/Original summary:\s*(.+)/);
-        if (original) {
+        if (original?.[1]) {
           forgottenSummaries.add(original[1].trim());
         }
       }
@@ -345,6 +390,8 @@ export class Mind {
     const kept = allEntries.filter((entry) => {
       // Remove [FORGOTTEN] markers themselves
       if (entry.summary.startsWith("[FORGOTTEN] ")) return false;
+      // Remove entries whose IDs match a forgotten marker
+      if (forgottenIds.has(entry.id)) return false;
       // Remove entries whose summaries match a forgotten marker
       if (forgottenSummaries.has(entry.summary)) return false;
       // Remove entries older than the cutoff (if specified)
@@ -360,6 +407,35 @@ export class Mind {
     }
 
     return { kept: kept.length, removed };
+  }
+
+  private resolveForgetTarget(
+    allEntries: MemoryEntry[],
+    target: { id?: string; summary?: string }
+  ): MemoryEntry {
+    const nonMarkers = allEntries.filter(
+      (entry) => !entry.summary.startsWith("[FORGOTTEN] ")
+    );
+
+    if (target.id) {
+      const byId = nonMarkers.find((entry) => entry.id === target.id);
+      if (!byId) {
+        throw new Error(`No memory entry found with id: ${target.id}`);
+      }
+      return byId;
+    }
+
+    const summary = target.summary ?? "";
+    const matches = nonMarkers.filter((entry) => entry.summary === summary);
+    if (matches.length === 0) {
+      throw new Error(`No memory entry found with summary: ${summary}`);
+    }
+    if (matches.length > 1) {
+      throw new Error(
+        `Summary is ambiguous (${matches.length} matches). Please use entry id instead.`
+      );
+    }
+    return matches[0];
   }
 }
 
