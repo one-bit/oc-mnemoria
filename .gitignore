@@ -3,3 +3,5 @@ dist/
 *.tsbuildinfo
 .DS_Store
 *.lock
+.opencode/
+opencode.json
