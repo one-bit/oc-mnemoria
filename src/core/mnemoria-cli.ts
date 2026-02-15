@@ -82,13 +82,27 @@ export class MnemoriaCli {
     return this;
   }
 
-  /** Add a memory entry. Returns the entry ID. */
+  /**
+   * Add a memory entry. Returns the entry ID.
+   *
+   * When `agent` is provided, it is embedded as an `Agent: <name>` line
+   * at the top of the content so it's indexed by the full-text engine.
+   * Once the mnemoria CLI ships with `--agent`, this will switch to using
+   * the native flag instead.
+   */
   async add(
     entryType: EntryType,
     summary: string,
-    content: string
+    content: string,
+    agent?: string
   ): Promise<string> {
     await this.ensureReady();
+
+    // Embed agent tag in content for searchability.
+    const taggedContent = agent
+      ? `Agent: ${agent}\n${content}`
+      : content;
+
     const output = await run([
       "--path",
       this.basePath,
@@ -97,7 +111,7 @@ export class MnemoriaCli {
       entryType,
       "-s",
       summary,
-      content,
+      taggedContent,
     ]);
     // Output: "Added entry: <uuid>"
     const match = output.match(/Added entry:\s+(.+)/);

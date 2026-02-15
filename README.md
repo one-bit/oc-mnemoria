@@ -1,25 +1,23 @@
 # oc-mnemoria
 
-Persistent per-agent memory for [OpenCode](https://opencode.ai), powered by
-[mnemoria](https://crates.io/crates/mnemoria).
+Persistent shared memory for [OpenCode](https://opencode.ai) agents, powered
+by [mnemoria](https://crates.io/crates/mnemoria).
 
 ## What it does
 
 Every time you start a new OpenCode session, your AI assistant loses all
-context from previous conversations. oc-mnemoria fixes this by giving each
-agent type its own persistent memory store:
+context from previous conversations. oc-mnemoria fixes this by giving all
+agents a shared "hive mind" — a single persistent memory store where every
+agent can read and write.
 
-| Agent    | Remembers                                          |
-|----------|----------------------------------------------------|
-| `plan`   | High-level goals, architecture decisions, roadmaps |
-| `build`  | Code changes, patterns found, bugs fixed           |
-| `ask`    | Questions asked, explanations given                |
-| `review` | Review feedback, quality patterns, style decisions |
+Each memory entry is tagged with the agent that created it (plan, build, ask,
+review, ...) so any agent can tell who recorded what. The build agent can see
+what the plan agent decided; the review agent can recall bugs the build agent
+fixed. No context is lost between roles.
 
-Memories are stored locally in append-only binary files using
-[mnemoria](https://github.com/one-bit/mnemoria) (a Rust engine with hybrid
-BM25 + semantic search). Each agent's memory is fully isolated -- no
-cross-contamination between roles.
+Memories are stored locally in an append-only binary file using
+[mnemoria](https://github.com/one-bit/mnemoria) — a Rust engine with hybrid
+BM25 + semantic search, CRC32 checksum chains, and corruption recovery.
 
 ## Prerequisites
 
@@ -64,32 +62,37 @@ cp commands/*.md ~/.config/opencode/commands/
 
 ### Storage layout
 
+All agents share a single memory store:
+
 ```
-.opencode/memory/
-  plan/mnemoria/        # plan agent's memory
-    log.bin
-    manifest.json
-    mnemoria.lock
-  build/mnemoria/       # build agent's memory
-    ...
-  ask/mnemoria/
-    ...
-  review/mnemoria/
-    ...
+.opencode/memory/mnemoria/
+  log.bin           # append-only binary log
+  manifest.json     # metadata and checksums
+  mnemoria.lock     # advisory file lock
 ```
 
-Each agent's store is a standard mnemoria directory. You can interact with
-them directly using the `mnemoria` CLI:
+You can interact with the store directly using the `mnemoria` CLI:
 
 ```sh
-# Check the build agent's stats
-mnemoria --path .opencode/memory/build stats
+mnemoria --path .opencode/memory stats
+mnemoria --path .opencode/memory search "authentication"
+mnemoria --path .opencode/memory export memories.json
+```
 
-# Search the plan agent's memories
-mnemoria --path .opencode/memory/plan search "authentication"
+### Agent tagging
 
-# Export build memories to JSON
-mnemoria --path .opencode/memory/build export memories.json
+Every memory entry includes an `Agent: <name>` tag in its content, making it
+searchable and visible when retrieved. When the mnemoria CLI ships with
+native `--agent` support, the plugin will switch to using that.
+
+Example of a stored entry's content:
+
+```
+Agent: build
+Found that the auth module uses JWT tokens with RS256 signing.
+Tool: read
+Files: src/auth/jwt.ts
+Findings: Functions: verifyToken, signToken, refreshToken
 ```
 
 ### Automatic capture
@@ -106,26 +109,23 @@ The plugin automatically captures context from tool usage:
 | `glob` | Search patterns, matched files            |
 
 Each observation is linked to the user's intent (extracted from the
-conversation) so the agent can trace *why* something was done.
+conversation) via chain IDs, so any agent can trace *why* something was done.
 
 ### System prompt injection
 
 At the start of each session, recent observations and past user goals are
-injected into the system prompt. This gives the agent immediate context
-without needing to search first.
+injected into the system prompt. Each entry shows which agent created it,
+giving the current agent immediate cross-agent context.
 
 ## Tools
 
 | Tool            | Description                                         |
 |-----------------|-----------------------------------------------------|
-| `remember`      | Store a categorized observation in any agent's memory |
+| `remember`      | Store a categorized observation in shared memory     |
 | `search_memory` | Search by keyword/semantic similarity               |
 | `ask_memory`    | Ask a natural language question                     |
-| `memory_stats`  | View statistics for all or specific agents          |
-| `timeline`      | Browse memories chronologically                     |
-
-All tools accept an optional `agent` parameter to target a specific agent's
-memory. If omitted, the current agent's memory is used.
+| `memory_stats`  | View statistics for the shared store                |
+| `timeline`      | Browse memories chronologically (all agents)        |
 
 ### Entry types
 
@@ -140,21 +140,21 @@ Observations are categorized when stored:
 |----------------------|--------------------------------------|
 | `/memory ask <q>`    | Ask about past decisions             |
 | `/memory search <q>` | Search memories                      |
-| `/memory stats`      | Show per-agent statistics            |
-| `/memory recent`     | Show recent memories (optionally by agent) |
-| `/memory timeline`   | Chronological view (optionally by agent)   |
+| `/memory stats`      | Show memory statistics               |
+| `/memory recent`     | Show recent memories                 |
+| `/memory timeline`   | Chronological view                   |
 
 ## Git integration
 
 Mnemoria's append-only binary format is designed for version control. You
-can commit the memory stores to track history alongside your code:
+can commit the memory store to track history alongside your code:
 
 ```sh
 git add .opencode/memory/
 git commit -m "update agent memories"
 ```
 
-Or ignore them:
+Or ignore it:
 
 ```sh
 echo ".opencode/memory/" >> .gitignore
@@ -163,8 +163,8 @@ echo ".opencode/memory/" >> .gitignore
 ## FAQ
 
 **How much disk space does this use?**
-Each memory store starts at ~0 bytes. A typical entry is ~100-500 bytes.
-Active daily use produces roughly 1-5 MB per agent per year.
+The store starts empty. A typical entry is ~100-500 bytes. Active daily use
+produces roughly 2-10 MB per year.
 
 **Is my data sent anywhere?**
 No. Everything stays on your local filesystem. The mnemoria engine runs
@@ -175,15 +175,16 @@ The mnemoria Rust engine delivers sub-millisecond search latency for
 typical store sizes (<10k entries). The plugin shells out to the CLI, so
 there's ~50ms overhead per operation from process spawning.
 
-**Can I reset an agent's memory?**
-Delete its directory:
+**Can I reset the memory?**
+Delete the store directory:
 ```sh
-rm -rf .opencode/memory/build/mnemoria/
+rm -rf .opencode/memory/mnemoria/
 ```
 
-**Can I share memories between agents?**
-Use the `agent` parameter on any tool to read from or write to any agent's
-memory. The isolation is per-store, not per-access.
+**Can I search only one agent's memories?**
+Search for the agent name as part of the query (e.g. `"build authentication"`)
+since the agent tag is indexed in the content. Once the mnemoria CLI ships
+native `--agent` filtering, this will be more precise.
 
 ## License
 

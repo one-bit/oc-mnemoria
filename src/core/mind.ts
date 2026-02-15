@@ -1,9 +1,9 @@
 /**
- * Mind — per-agent memory manager.
+ * Mind — shared hive-mind memory manager.
  *
- * Each opencode agent (plan, build, ask, review, ...) gets its own isolated
- * mnemoria store under `.opencode/memory/<agent>/`. The Mind class wraps
- * a MnemoriaCli instance and adds chain-linking (intent tracking) on top.
+ * All agents share a single mnemoria store at `.opencode/memory/`. Each
+ * memory entry is tagged with the agent that created it, so agents can
+ * see each other's memories while still knowing who recorded what.
  */
 
 import { join } from "node:path";
@@ -18,43 +18,45 @@ import {
   type PluginConfig,
   type SearchResult,
   type TimelineOptions,
-  type UserIntent,
 } from "../types.js";
-import { generateId, estimateTokens, truncateToTokens } from "../utils/helpers.js";
+import { generateId, estimateTokens } from "../utils/helpers.js";
+
+/** Parse an agent name from content that starts with "Agent: <name>\n". */
+function parseAgentFromContent(content: string): AgentName | undefined {
+  const match = content.match(/^Agent:\s*(\S+)/);
+  return match?.[1] as AgentName | undefined;
+}
+
+/** Parse an agent name from a summary that starts with "[agent] ...". */
+function parseAgentFromSummary(summary: string): AgentName | undefined {
+  // Timeline/search output from CLI won't have this, but our own
+  // summaries embed it when the agent is known from content.
+  return undefined; // agent info lives in content, not summary
+}
 
 export class Mind {
   private cli: MnemoriaCli;
   private currentChainId: string | null = null;
   private currentParentId: string | null = null;
   private config: PluginConfig;
-  private agent: AgentName;
 
-  private constructor(cli: MnemoriaCli, agent: AgentName, config: PluginConfig) {
+  private constructor(cli: MnemoriaCli, config: PluginConfig) {
     this.cli = cli;
-    this.agent = agent;
     this.config = config;
   }
 
   /**
-   * Open (or create) a mind for the given agent.
+   * Open (or create) the shared hive-mind store.
    */
-  static async open(
-    agent: AgentName,
-    config: Partial<PluginConfig> = {}
-  ): Promise<Mind> {
+  static async open(config: Partial<PluginConfig> = {}): Promise<Mind> {
     const mergedConfig = { ...DEFAULT_CONFIG, ...config };
     const projectDir = process.env.OPENCODE_PROJECT_DIR || process.cwd();
-    const basePath = join(projectDir, mergedConfig.memoryDir, agent);
+    const basePath = join(projectDir, mergedConfig.memoryDir);
 
     const cli = new MnemoriaCli(basePath);
     await cli.ensureReady();
 
-    return new Mind(cli, agent, mergedConfig);
-  }
-
-  /** The agent this mind belongs to. */
-  getAgent(): AgentName {
-    return this.agent;
+    return new Mind(cli, mergedConfig);
   }
 
   /** The current intent chain ID. */
@@ -68,15 +70,16 @@ export class Mind {
   }
 
   /**
-   * Store a new observation.
+   * Store a new observation, tagged with the agent that created it.
    *
-   * The content field is composed from the summary and any additional
-   * metadata so that the full-text search index covers everything useful.
+   * The agent name is embedded in the content as an `Agent: <name>` line
+   * so it's indexed by the full-text engine and visible on retrieval.
    */
   async remember(input: {
     type: EntryType;
     summary: string;
     content: string;
+    agent?: AgentName;
     tool?: string;
     metadata?: ObservationMetadata;
   }): Promise<string> {
@@ -84,7 +87,7 @@ export class Mind {
     const parts: string[] = [input.content];
 
     if (input.tool) {
-      parts.push(`\nTool: ${input.tool}`);
+      parts.push(`Tool: ${input.tool}`);
     }
     if (input.metadata?.filePaths?.length) {
       parts.push(`Files: ${input.metadata.filePaths.join(", ")}`);
@@ -101,7 +104,12 @@ export class Mind {
 
     const fullContent = parts.join("\n");
 
-    const id = await this.cli.add(input.type, input.summary, fullContent);
+    const id = await this.cli.add(
+      input.type,
+      input.summary,
+      fullContent,
+      input.agent
+    );
     this.currentParentId = id;
     return id;
   }
@@ -113,6 +121,7 @@ export class Mind {
     type: EntryType;
     summary: string;
     content: string;
+    agent?: AgentName;
     tool?: string;
     metadata?: ObservationMetadata;
   }): Promise<string> {
@@ -131,14 +140,19 @@ export class Mind {
    * Set the user's intent for this conversation turn.
    * Creates a new chain ID that links subsequent observations.
    */
-  async setIntent(message: string, extractedGoal: string): Promise<string> {
+  async setIntent(
+    message: string,
+    extractedGoal: string,
+    agent?: AgentName
+  ): Promise<string> {
     this.currentChainId = generateId();
     this.currentParentId = null;
 
     const id = await this.cli.add(
       "intent",
       `Intent: ${extractedGoal.slice(0, 100)}`,
-      `User message: ${message}\nExtracted goal: ${extractedGoal}\nChainId: ${this.currentChainId}`
+      `User message: ${message}\nExtracted goal: ${extractedGoal}\nChainId: ${this.currentChainId}`,
+      agent
     );
 
     this.currentParentId = id;
@@ -146,21 +160,22 @@ export class Mind {
   }
 
   /**
-   * Search memories.
+   * Search the shared memory. Results may come from any agent.
    */
   async search(query: string, limit = 10): Promise<SearchResult[]> {
     return this.cli.search(query, limit);
   }
 
   /**
-   * Ask a question about past memories.
+   * Ask a question against the shared memory.
    */
   async ask(question: string): Promise<string> {
     return this.cli.ask(question);
   }
 
   /**
-   * Get a timeline of memories.
+   * Get a timeline of memories from all agents.
+   * The agent name is parsed from each entry's content.
    */
   async timeline(options?: Partial<TimelineOptions>): Promise<Observation[]> {
     const entries = await this.cli.timeline(options);
@@ -170,12 +185,12 @@ export class Mind {
       summary: e.summary,
       content: e.content,
       timestamp: e.timestamp,
-      agent: this.agent,
+      agent: parseAgentFromContent(e.content),
     }));
   }
 
   /**
-   * Get memory statistics.
+   * Get memory statistics for the shared store.
    */
   async stats(): Promise<MemoryStats> {
     return this.cli.stats();
@@ -211,7 +226,7 @@ export class Mind {
         summary: entry.summary,
         content: entry.content,
         timestamp: entry.timestamp,
-        agent: this.agent,
+        agent: parseAgentFromContent(entry.content),
       });
     }
 
@@ -225,33 +240,26 @@ export class Mind {
   }
 }
 
-// ─── Singleton cache per agent ───────────────────────────────────────────────
+// ─── Singleton ───────────────────────────────────────────────────────────────
 
-const mindCache = new Map<AgentName, Mind>();
+let mindInstance: Mind | null = null;
 
 /**
- * Get or create a Mind instance for the given agent.
- * Uses a singleton cache so the same agent always returns the same instance.
+ * Get or create the shared Mind instance.
+ * All agents share this single instance (and single mnemoria store).
  */
 export async function getMind(
-  agent: AgentName,
   config?: Partial<PluginConfig>
 ): Promise<Mind> {
-  const cached = mindCache.get(agent);
-  if (cached) return cached;
+  if (mindInstance) return mindInstance;
 
-  const mind = await Mind.open(agent, config);
-  mindCache.set(agent, mind);
-  return mind;
+  mindInstance = await Mind.open(config);
+  return mindInstance;
 }
 
 /**
- * Reset the cache for a specific agent (or all agents).
+ * Reset the shared Mind singleton (for testing).
  */
-export function resetMind(agent?: AgentName): void {
-  if (agent) {
-    mindCache.delete(agent);
-  } else {
-    mindCache.clear();
-  }
+export function resetMind(): void {
+  mindInstance = null;
 }
