@@ -147,6 +147,8 @@ giving the current agent immediate cross-agent context.
 | `ask_memory`    | Ask a natural language question                     |
 | `memory_stats`  | View statistics for the shared store                |
 | `timeline`      | Browse memories chronologically (all agents)        |
+| `forget`        | Mark a memory as obsolete (append-only tombstone)   |
+| `compact`       | Remove forgotten entries/markers and optionally prune old data |
 
 ### Entry types
 
@@ -164,6 +166,8 @@ Observations are categorized when stored:
 | `/memory stats`      | Show memory statistics               |
 | `/memory recent`     | Show recent memories                 |
 | `/memory timeline`   | Chronological view                   |
+| `/memory forget ...` | Mark a memory as forgotten/obsolete  |
+| `/memory compact`    | Compact store by removing forgotten data |
 
 ## Inspecting memories from the command line
 
@@ -266,6 +270,38 @@ mnemoria --path .opencode verify
 
 Checks the CRC32 checksum chain across all entries. Returns a non-zero exit
 code on corruption, making it suitable for CI or pre-commit hooks.
+
+## Memory maintenance workflows
+
+Over time, some memories become outdated. oc-mnemoria supports a two-step
+maintenance flow:
+
+1. Mark obsolete entries with `forget` (append-only marker)
+2. Run `compact` to physically rebuild the store without forgotten entries
+
+### In OpenCode (recommended)
+
+Use slash commands:
+
+```sh
+/memory search flaky test timeout
+/memory forget id=8d9f... reason="Superseded by retry policy"
+/memory compact
+```
+
+Optionally prune old entries during compaction:
+
+```sh
+/memory compact 90
+```
+
+(`90` means `maxAgeDays=90`)
+
+### What each step does
+
+- `forget` keeps history intact by writing a tombstone marker
+- `compact` removes forgotten markers/entries and optionally old data
+- This keeps the memory store accurate while preserving auditability between runs
 
 ## Git integration
 

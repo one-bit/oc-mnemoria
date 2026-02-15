@@ -192,6 +192,23 @@ describe("MnemoriaCli", () => {
       expect(args).toContain("-a");
       expect(args).toContain("plan");
     });
+
+    it("parses summaries containing punctuation and scientific scores", async () => {
+      const output = [
+        "Found 1 results:",
+        "1. [discovery] (build) Investigated parser v2.1 - edge case: score token (score: 1.23e-1)",
+      ].join("\n");
+      mockExecResult(output);
+
+      const cli = new MnemoriaCli("/proj");
+      const results = await cli.search("parser");
+
+      expect(results).toHaveLength(1);
+      expect(results[0].entry.summary).toBe(
+        "Investigated parser v2.1 - edge case: score token"
+      );
+      expect(results[0].score).toBeCloseTo(0.123);
+    });
   });
 
   // ─── ask ─────────────────────────────────────────────────────────────────
@@ -294,6 +311,23 @@ describe("MnemoriaCli", () => {
       expect(args).toContain("200");
       expect(args).toContain("-a");
       expect(args).toContain("review");
+    });
+
+    it("parses summaries that contain hyphens", async () => {
+      const output = [
+        "Timeline (1 entries):",
+        "1. [decision] (plan) Use append-only log - keeps audit trail - 1700000200000",
+      ].join("\n");
+      mockExecResult(output);
+
+      const cli = new MnemoriaCli("/proj");
+      const entries = await cli.timeline();
+
+      expect(entries).toHaveLength(1);
+      expect(entries[0].summary).toBe(
+        "Use append-only log - keeps audit trail"
+      );
+      expect(entries[0].timestamp).toBe(1700000200000);
     });
   });
 

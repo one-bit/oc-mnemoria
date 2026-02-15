@@ -115,6 +115,7 @@ describe("OcMnemoria plugin", () => {
     expect(tools.memory_stats).toBeDefined();
     expect(tools.timeline).toBeDefined();
     expect(tools.forget).toBeDefined();
+    expect(tools.compact).toBeDefined();
   });
 
   it("returns hook handlers", async () => {
@@ -247,6 +248,27 @@ describe("forget tool", () => {
     expect(output).toContain("Known memory");
     expect(output).toContain("id: entry-123");
     expect(output).toContain("marker id: entry-001");
+  });
+});
+
+describe("compact tool", () => {
+  it("compacts memory without age pruning", async () => {
+    const result = await OcMnemoria({} as never);
+    const tools = result.tool ?? {};
+    const output = await tools.compact.execute({}, mockContext("build"));
+    expect(output).toContain("Compaction complete");
+    expect(output).toContain("kept");
+    expect(output).toContain("removed");
+  });
+
+  it("compacts memory with a max age", async () => {
+    const result = await OcMnemoria({} as never);
+    const tools = result.tool ?? {};
+    const output = await tools.compact.execute(
+      { maxAgeDays: 30 },
+      mockContext("build")
+    );
+    expect(output).toContain("max age: 30 days");
   });
 });
 

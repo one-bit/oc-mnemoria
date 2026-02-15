@@ -66,8 +66,15 @@ add_plugin_to_config() {
 
     if command -v jq &> /dev/null; then
         if jq -e '.plugin' "$config_path" > /dev/null 2>&1; then
-            jq '.plugin += ["oc-mnemoria/plugin"]' "$config_path" > "$config_path.tmp" && mv "$config_path.tmp" "$config_path"
-            echo "   Added oc-mnemoria/plugin to plugin array in $config_path"
+            jq '
+              .plugin = (
+                (if (.plugin | type) == "array" then .plugin else [.plugin] end)
+                | map(if . == "@oc-mnemoria/plugin" or . == "oc-mnemoria" then "oc-mnemoria/plugin" else . end)
+                | . + (if index("oc-mnemoria/plugin") == null then ["oc-mnemoria/plugin"] else [] end)
+                | unique
+              )
+            ' "$config_path" > "$config_path.tmp" && mv "$config_path.tmp" "$config_path"
+            echo "   Ensured oc-mnemoria/plugin is configured in $config_path"
         else
             jq '. + {plugin: ["oc-mnemoria/plugin"]}' "$config_path" > "$config_path.tmp" && mv "$config_path.tmp" "$config_path"
             echo "   Added plugin array with oc-mnemoria/plugin to $config_path"

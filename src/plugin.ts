@@ -330,6 +330,29 @@ const OcMnemoria: Plugin = async (_input: PluginInput) => {
           );
         },
       }),
+
+      compact: tool({
+        description:
+          "Compact the memory store by removing forgotten markers/entries and optionally pruning old memories. " +
+          "Use this to keep long-running stores tidy and performant.",
+        args: {
+          maxAgeDays: tool.schema
+            .number()
+            .optional()
+            .describe(
+              "If provided, remove entries older than this many days during compaction"
+            ),
+        },
+        async execute(args) {
+          const mind = await getMind();
+          const result = await mind.compact(args.maxAgeDays as number | undefined);
+          const ageHint =
+            typeof args.maxAgeDays === "number"
+              ? ` (max age: ${args.maxAgeDays} days)`
+              : "";
+          return `Compaction complete${ageHint}: kept ${result.kept}, removed ${result.removed}.`;
+        },
+      }),
     },
 
     "tool.execute.after": async (hookInput, hookOutput) => {

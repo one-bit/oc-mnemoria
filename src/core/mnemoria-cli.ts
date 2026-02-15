@@ -72,6 +72,67 @@ async function run(
   throw lastError ?? new Error("mnemoria CLI error: Unknown error");
 }
 
+function parseSearchResultLine(line: string): SearchResult | null {
+  const baseMatch = line.match(/^\d+\.\s+\[([^\]]+)]\s+\(([^)]+)\)\s+(.+)$/);
+  if (!baseMatch) return null;
+
+  const entryType = baseMatch[1] as EntryType;
+  const agent = baseMatch[2];
+  const rest = baseMatch[3];
+
+  const scoreMatch = rest.match(/\(score:\s*([^)]+)\)\s*$/i);
+  if (!scoreMatch || scoreMatch.index === undefined) return null;
+
+  const score = Number.parseFloat(scoreMatch[1]);
+  if (Number.isNaN(score)) return null;
+
+  const summary = rest.slice(0, scoreMatch.index).trim();
+  if (!summary) return null;
+
+  return {
+    id: "",
+    entry: {
+      id: "",
+      agent_name: agent,
+      entry_type: entryType,
+      summary,
+      content: "",
+      timestamp: 0,
+      checksum: 0,
+      prev_checksum: 0,
+    },
+    score,
+  };
+}
+
+function parseTimelineLine(line: string): MemoryEntry | null {
+  const baseMatch = line.match(/^\d+\.\s+\[([^\]]+)]\s+\(([^)]+)\)\s+(.+)$/);
+  if (!baseMatch) return null;
+
+  const entryType = baseMatch[1] as EntryType;
+  const agent = baseMatch[2];
+  const rest = baseMatch[3];
+  const timeMatch = rest.match(/\s+-\s*(\d+)\s*$/);
+  if (!timeMatch || timeMatch.index === undefined) return null;
+
+  const timestamp = Number.parseInt(timeMatch[1], 10);
+  if (Number.isNaN(timestamp)) return null;
+
+  const summary = rest.slice(0, timeMatch.index).trim();
+  if (!summary) return null;
+
+  return {
+    id: "",
+    agent_name: agent,
+    entry_type: entryType,
+    summary,
+    content: "",
+    timestamp,
+    checksum: 0,
+    prev_checksum: 0,
+  };
+}
+
 /**
  * MnemoriaCli — stateless wrapper for a single mnemoria store directory.
  *
@@ -182,26 +243,8 @@ export class MnemoriaCli {
     const lines = output.split("\n").filter((l) => l.trim());
 
     for (const line of lines) {
-      // More flexible regex: allows variable whitespace and optional trailing content
-      const m = line.match(
-        /^\d+\.\s+\[([^\]]+)]\s+\(([^)]+)\)\s+(.+?)\s+\(score:\s*([\d.]+)\)\s*$/
-      );
-      if (m) {
-        results.push({
-          id: "",
-          entry: {
-            id: "",
-            agent_name: m[2],
-            entry_type: m[1] as EntryType,
-            summary: m[3],
-            content: "",
-            timestamp: 0,
-            checksum: 0,
-            prev_checksum: 0,
-          },
-          score: parseFloat(m[4]),
-        });
-      }
+      const parsed = parseSearchResultLine(line);
+      if (parsed) results.push(parsed);
     }
 
     const dataLines = lines.filter((line) => /^\d+\./.test(line));
@@ -277,20 +320,8 @@ export class MnemoriaCli {
     const lines = output.split("\n").filter((l) => l.trim());
 
     for (const line of lines) {
-      // More flexible regex: allows variable whitespace around the dash separator
-      const m = line.match(/^\d+\.\s+\[([^\]]+)]\s+\(([^)]+)\)\s+(.+?)\s+-\s*(\d+)\s*$/);
-      if (m) {
-        entries.push({
-          id: "",
-          agent_name: m[2],
-          entry_type: m[1] as EntryType,
-          summary: m[3],
-          content: "",
-          timestamp: parseInt(m[4], 10),
-          checksum: 0,
-          prev_checksum: 0,
-        });
-      }
+      const parsed = parseTimelineLine(line);
+      if (parsed) entries.push(parsed);
     }
 
     const dataLines = lines.filter((line) => /^\d+\./.test(line));
