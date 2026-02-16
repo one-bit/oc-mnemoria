@@ -8,75 +8,39 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
+import { readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
 import type { EntryType, MemoryEntry, MemoryStats, SearchResult, TimelineOptions } from "../types.js";
+import {
+  MNEMORIA_BIN,
+  CLI_MAX_RETRIES,
+  CLI_RETRY_BASE_DELAY_MS,
+  CLI_COMMAND_TIMEOUT_MS,
+  CLI_MAX_BUFFER_BYTES,
+  CLI_AVAILABILITY_TIMEOUT_MS,
+  EXPORT_CACHE_TTL_MS,
+} from "../constants.js";
 
 const execFileAsync = promisify(execFile);
 
-const MNEMORIA_BIN = "mnemoria";
+const VALID_ENTRY_TYPES = new Set<string>([
+  "intent","discovery","decision","problem","solution","pattern","warning","success","refactor","bugfix","feature"
+]);
 
-/** Maximum number of retries for transient CLI failures. */
-const MAX_RETRIES = 2;
-/** Base delay (ms) between retries (doubled each attempt). */
-const RETRY_BASE_DELAY_MS = 100;
-/** TTL (ms) for full-store export cache used by enrichment. */
-const EXPORT_CACHE_TTL_MS = 2_000;
-
-/**
- * Execute a mnemoria CLI command and return stdout.
- * Stderr is suppressed (mnemoria logs warnings there).
- *
- * Retries up to MAX_RETRIES times on transient failures (lock contention,
- * timeouts) with exponential backoff. Permanent errors (e.g., ENOENT) are
- * not retried.
- */
-async function run(
-  args: string[],
-  options?: { timeout?: number; retries?: number }
-): Promise<string> {
-  const timeout = options?.timeout ?? 30_000;
-  const maxRetries = options?.retries ?? MAX_RETRIES;
-
-  let lastError: Error | undefined;
-
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      const { stdout } = await execFileAsync(MNEMORIA_BIN, args, {
-        timeout,
-        maxBuffer: 10 * 1024 * 1024, // 10 MB
-        env: { ...process.env, RUST_LOG: "" }, // suppress tracing
-      });
-      return stdout.trim();
-    } catch (err: unknown) {
-      const execErr = err as { stderr?: string; stdout?: string; message?: string; code?: string };
-      const msg = execErr.stderr || execErr.message || "Unknown error";
-
-      // Don't retry on permanent errors (binary not found, permission denied)
-      if (execErr.code === "ENOENT" || execErr.code === "EACCES") {
-        throw new Error(`mnemoria CLI error: ${msg}`);
-      }
-
-      lastError = new Error(`mnemoria CLI error: ${msg}`);
-
-      // Retry with exponential backoff
-      if (attempt < maxRetries) {
-        const delay = RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
-    }
-  }
-
-  throw lastError ?? new Error("mnemoria CLI error: Unknown error");
+function isValidEntryType(s: string): s is EntryType {
+  return VALID_ENTRY_TYPES.has(s);
 }
 
 function parseSearchResultLine(line: string): SearchResult | null {
   const baseMatch = line.match(/^\d+\.\s+\[([^\]]+)]\s+\(([^)]+)\)\s+(.+)$/);
   if (!baseMatch) return null;
 
-  const entryType = baseMatch[1] as EntryType;
+  const entryTypeStr = baseMatch[1];
+  if (!isValidEntryType(entryTypeStr)) return null;
+  const entryType = entryTypeStr;
   const agent = baseMatch[2];
   const rest = baseMatch[3];
 
@@ -109,7 +73,9 @@ function parseTimelineLine(line: string): MemoryEntry | null {
   const baseMatch = line.match(/^\d+\.\s+\[([^\]]+)]\s+\(([^)]+)\)\s+(.+)$/);
   if (!baseMatch) return null;
 
-  const entryType = baseMatch[1] as EntryType;
+  const entryTypeStr = baseMatch[1];
+  if (!isValidEntryType(entryTypeStr)) return null;
+  const entryType = entryTypeStr;
   const agent = baseMatch[2];
   const rest = baseMatch[3];
   const timeMatch = rest.match(/\s+-\s*(\d+)\s*$/);
@@ -146,10 +112,59 @@ export class MnemoriaCli {
 
   constructor(public readonly basePath: string) {}
 
+  /**
+   * Execute a mnemoria CLI command and return stdout.
+   * Stderr is suppressed (mnemoria logs warnings there).
+   *
+   * Retries up to MAX_RETRIES times on transient failures (lock contention,
+   * timeouts) with exponential backoff. Permanent errors (e.g., ENOENT) are
+   * not retried.
+   */
+  private async run(
+    args: string[],
+    options?: { timeout?: number; retries?: number }
+  ): Promise<string> {
+    const timeout = options?.timeout ?? CLI_COMMAND_TIMEOUT_MS;
+    const maxRetries = options?.retries ?? CLI_MAX_RETRIES;
+
+    let lastError: Error | undefined;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const { stdout } = await execFileAsync(MNEMORIA_BIN, args, {
+          timeout,
+          maxBuffer: CLI_MAX_BUFFER_BYTES,
+          env: { ...process.env, RUST_LOG: "" }, // suppress tracing
+        });
+        return stdout.trim();
+      } catch (err: unknown) {
+        const execErr = err instanceof Error ? err : new Error(String(err));
+        const stderr = (err as Record<string, unknown>)?.stderr;
+        const msg = typeof stderr === "string" && stderr.length > 0 ? stderr : execErr.message;
+        const code = (err as Record<string, unknown>)?.code;
+
+        // Don't retry on permanent errors (binary not found, permission denied)
+        if (code === "ENOENT" || code === "EACCES") {
+          throw new Error(`mnemoria CLI error: ${msg}`);
+        }
+
+        lastError = new Error(`mnemoria CLI error: ${msg}`);
+
+        // Retry with exponential backoff
+        if (attempt < maxRetries) {
+          const delay = CLI_RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+      }
+    }
+
+    throw lastError ?? new Error("mnemoria CLI error: Unknown error");
+  }
+
   /** Check whether the mnemoria binary is available on PATH. */
   static async isAvailable(): Promise<boolean> {
     try {
-      await execFileAsync(MNEMORIA_BIN, ["--help"], { timeout: 5_000 });
+      await execFileAsync(MNEMORIA_BIN, ["--help"], { timeout: CLI_AVAILABILITY_TIMEOUT_MS });
       return true;
     } catch {
       return false;
@@ -172,7 +187,7 @@ export class MnemoriaCli {
       this._ready = true;
       return;
     }
-    await run(["--path", this.basePath, "init"]);
+    await this.run(["--path", this.basePath, "init"]);
     this._ready = true;
   }
 
@@ -196,7 +211,7 @@ export class MnemoriaCli {
     agent: string
   ): Promise<string> {
     await this.ensureReady();
-    const output = await run([
+    const output = await this.run([
       "--path",
       this.basePath,
       "add",
@@ -233,7 +248,7 @@ export class MnemoriaCli {
     ];
     if (agent) args.push("-a", agent);
 
-    const output = await run(args);
+    const output = await this.run(args);
 
     if (output.includes("Found 0 results") || output.includes("No results") || output.trim() === "") {
       return [];
@@ -264,7 +279,7 @@ export class MnemoriaCli {
     await this.ensureReady();
     const args = ["--path", this.basePath, "ask", question];
     if (agent) args.push("-a", agent);
-    return await run(args);
+    return await this.run(args);
   }
 
   /**
@@ -279,7 +294,7 @@ export class MnemoriaCli {
    */
   async stats(): Promise<MemoryStats> {
     await this.ensureReady();
-    const output = await run(["--path", this.basePath, "stats"]);
+    const output = await this.run(["--path", this.basePath, "stats"]);
 
     const totalMatch = output.match(/Total entries:\s+(\d+)/);
     const sizeMatch = output.match(/File size:\s+(\d+)/);
@@ -310,7 +325,7 @@ export class MnemoriaCli {
     if (options?.reverse) args.push("-r");
     if (agent) args.push("-a", agent);
 
-    const output = await run(args);
+    const output = await this.run(args);
 
     if (output.includes("(0 entries)") || output.includes("No entries") || output.trim() === "") {
       return [];
@@ -345,11 +360,11 @@ export class MnemoriaCli {
       `mnemoria-export-${randomBytes(8).toString("hex")}.json`
     );
     try {
-      await run(["--path", this.basePath, "export", tmpFile]);
-      const json = readFileSync(tmpFile, "utf-8");
+      await this.run(["--path", this.basePath, "export", tmpFile]);
+      const json = await readFile(tmpFile, "utf-8");
       return JSON.parse(json) as MemoryEntry[];
     } finally {
-      try { unlinkSync(tmpFile); } catch { /* ignore */ }
+      try { await unlink(tmpFile); } catch { /* ignore */ }
     }
   }
 
@@ -412,34 +427,57 @@ export class MnemoriaCli {
   /**
    * Rebuild the store from a filtered list of entries.
    *
-   * This is used by the compact operation: the old store is deleted and
-   * entries are re-added one by one (preserving their original metadata
-   * as closely as possible).
-   *
-   * WARNING: This is a destructive operation. The caller should export
-   * and validate the entry list before calling this method.
+   * This is used by the compact operation. The rebuild is performed
+   * atomically: entries are written to a temporary store first, then
+   * the temp store is swapped in to replace the real one. If anything
+   * fails, the original store is left untouched.
    */
   async rebuild(entries: MemoryEntry[]): Promise<void> {
-    // Delete the existing store
-    const { rmSync: rm } = await import("node:fs");
-    try {
-      rm(this.storePath, { recursive: true, force: true });
-    } catch { /* ignore if already gone */ }
+    const tempDir = join(tmpdir(), "mnemoria-rebuild-" + randomBytes(8).toString("hex"));
 
-    // Reset the cached ready state since the store was deleted
+    try {
+      // Create a temporary MnemoriaCli that writes to the temp directory
+      mkdirSync(tempDir, { recursive: true });
+      const tempCli = new MnemoriaCli(tempDir);
+      await tempCli.init();
+
+      // Re-add all entries to the temp store
+      for (const entry of entries) {
+        await tempCli.add(
+          entry.entry_type,
+          entry.summary,
+          entry.content,
+          entry.agent_name
+        );
+      }
+
+      // Atomic swap: remove the real store, move the temp store in
+      rmSync(this.storePath, { recursive: true, force: true });
+
+      const tempStorePath = join(tempDir, "mnemoria");
+      try {
+        renameSync(tempStorePath, this.storePath);
+      } catch {
+        // renameSync fails across devices; fall back to copy + delete
+        cpSync(tempStorePath, this.storePath, { recursive: true });
+        rmSync(tempStorePath, { recursive: true, force: true });
+      }
+    } catch (err) {
+      // On any failure, clean up the temp dir but leave the original store intact
+      try {
+        rmSync(tempDir, { recursive: true, force: true });
+      } catch { /* ignore cleanup errors */ }
+      throw err;
+    }
+
+    // Clean up the remaining temp directory shell (the inner mnemoria/ was moved out)
+    try {
+      rmSync(tempDir, { recursive: true, force: true });
+    } catch { /* ignore */ }
+
+    // Reset state so the next operation re-reads the swapped-in store
     this._ready = false;
     this.invalidateExportCache();
-    await this.init();
-
-    // Re-add all entries
-    for (const entry of entries) {
-      await this.add(
-        entry.entry_type,
-        entry.summary,
-        entry.content,
-        entry.agent_name
-      );
-    }
   }
 
   /**
@@ -447,7 +485,7 @@ export class MnemoriaCli {
    */
   async verify(): Promise<boolean> {
     await this.ensureReady();
-    const output = await run(["--path", this.basePath, "verify"]);
+    const output = await this.run(["--path", this.basePath, "verify"]);
     return output.includes("passed");
   }
 

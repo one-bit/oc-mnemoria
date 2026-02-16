@@ -22,34 +22,46 @@ import {
   type TimelineOptions,
 } from "../types.js";
 import { generateId, estimateTokens } from "../utils/helpers.js";
-
-/** Pending observation for the batch queue. */
-interface PendingObservation {
-  type: EntryType;
-  summary: string;
-  content: string;
-  agent: AgentName;
-}
-
-/** How long (ms) to wait before flushing the batch queue. */
-const BATCH_FLUSH_DELAY_MS = 500;
-/** Maximum batch size before forcing an immediate flush. */
-const BATCH_MAX_SIZE = 20;
+import {
+  MAX_CHAIN_MAP_SIZE,
+  FORGOTTEN_MARKER_PREFIX,
+  SUMMARY_MAX_LENGTH,
+  INTENT_SUMMARY_MAX_LENGTH,
+  MS_PER_DAY,
+} from "../constants.js";
 
 export class Mind {
   private cli: MnemoriaCli;
-  private currentChainId: string | null = null;
-  private currentParentId: string | null = null;
+  private chainIds = new Map<string, string>();
+  private parentIds = new Map<string, string>();
   private config: PluginConfig;
-
-  // Batch queue for auto-captured observations
-  private batchQueue: PendingObservation[] = [];
-  private batchTimer: ReturnType<typeof setTimeout> | null = null;
-  private flushing = false;
 
   private constructor(cli: MnemoriaCli, config: PluginConfig) {
     this.cli = cli;
     this.config = config;
+  }
+
+  private sessionKey(agent: AgentName): string {
+    return agent;
+  }
+
+  /** Evict the oldest entry when the map exceeds the size cap. */
+  private evictIfNeeded(map: Map<string, string>): void {
+    if (map.size > MAX_CHAIN_MAP_SIZE) {
+      const oldest = map.keys().next().value;
+      if (oldest !== undefined) {
+        map.delete(oldest);
+      }
+    }
+  }
+
+  /** Touch an entry to move it to the end (most-recently-used). */
+  private touchKey(map: Map<string, string>, key: string): void {
+    const value = map.get(key);
+    if (value !== undefined) {
+      map.delete(key);
+      map.set(key, value);
+    }
   }
 
   /**
@@ -66,9 +78,12 @@ export class Mind {
     return new Mind(cli, mergedConfig);
   }
 
-  /** The current intent chain ID. */
-  getCurrentChainId(): string | null {
-    return this.currentChainId;
+  /** The current intent chain ID for a given agent. */
+  getCurrentChainId(agent?: AgentName): string | null {
+    if (!agent) return null;
+    const key = this.sessionKey(agent);
+    this.touchKey(this.chainIds, key);
+    return this.chainIds.get(key) ?? null;
   }
 
   /** The path to the memory store. */
@@ -88,6 +103,8 @@ export class Mind {
     metadata?: ObservationMetadata;
   }): Promise<string> {
     const parts: string[] = [input.content];
+    const sessionKey = this.sessionKey(input.agent);
+    const chainId = this.chainIds.get(sessionKey);
 
     if (input.tool) {
       parts.push(`Tool: ${input.tool}`);
@@ -101,19 +118,21 @@ export class Mind {
     if (input.metadata?.patterns?.length) {
       parts.push(`Patterns: ${input.metadata.patterns.join("; ")}`);
     }
-    if (this.currentChainId) {
-      parts.push(`ChainId: ${this.currentChainId}`);
+    if (chainId) {
+      parts.push(`ChainId: ${chainId}`);
     }
 
     const fullContent = parts.join("\n");
+    const truncatedSummary = input.summary.slice(0, SUMMARY_MAX_LENGTH);
 
     const id = await this.cli.add(
       input.type,
-      input.summary,
+      truncatedSummary,
       fullContent,
       input.agent
     );
-    this.currentParentId = id;
+    this.parentIds.set(sessionKey, id);
+    this.evictIfNeeded(this.parentIds);
     return id;
   }
 
@@ -128,87 +147,16 @@ export class Mind {
     tool?: string;
     metadata?: ObservationMetadata;
   }): Promise<string> {
+    const chainId = this.chainIds.get(this.sessionKey(input.agent));
     const enrichedMetadata: ObservationMetadata = {
       ...input.metadata,
-      sessionId: this.currentChainId ?? undefined,
+      sessionId: chainId ?? undefined,
     };
 
     return this.remember({
       ...input,
       metadata: enrichedMetadata,
     });
-  }
-
-  /**
-   * Queue an observation for batched writing.
-   * Observations are flushed after BATCH_FLUSH_DELAY_MS or when the
-   * queue reaches BATCH_MAX_SIZE, whichever comes first.
-   */
-  queueObservation(input: {
-    type: EntryType;
-    summary: string;
-    content: string;
-    agent: AgentName;
-  }): void {
-    this.batchQueue.push(input);
-
-    // Force flush if we've hit the max batch size
-    if (this.batchQueue.length >= BATCH_MAX_SIZE) {
-      void this.flushBatch();
-      return;
-    }
-
-    // Otherwise, schedule a delayed flush
-    if (!this.batchTimer) {
-      this.batchTimer = setTimeout(() => {
-        void this.flushBatch();
-      }, BATCH_FLUSH_DELAY_MS);
-    }
-  }
-
-  /**
-   * Flush all pending observations to the store.
-   */
-  async flushBatch(): Promise<void> {
-    if (this.batchTimer) {
-      clearTimeout(this.batchTimer);
-      this.batchTimer = null;
-    }
-
-    if (this.flushing || this.batchQueue.length === 0) return;
-
-    this.flushing = true;
-    const batch = this.batchQueue.splice(0);
-    let nextIndex = 0;
-
-    try {
-      // Write all entries sequentially (mnemoria uses file locks)
-      for (; nextIndex < batch.length; nextIndex++) {
-        const obs = batch[nextIndex];
-        await this.cli.add(obs.type, obs.summary, obs.content, obs.agent);
-      }
-    } catch (err) {
-      // Re-queue entries that were not written yet so observations are not lost.
-      const remaining = batch.slice(nextIndex);
-      if (remaining.length > 0) {
-        this.batchQueue.unshift(...remaining);
-      }
-      console.error(`[oc-mnemoria] Failed to flush batch (${batch.length} entries):`, err);
-    } finally {
-      this.flushing = false;
-
-      // If new observations were queued while flushing, ensure another flush runs.
-      if (this.batchQueue.length > 0 && !this.batchTimer) {
-        this.batchTimer = setTimeout(() => {
-          void this.flushBatch();
-        }, BATCH_FLUSH_DELAY_MS);
-      }
-    }
-  }
-
-  /** Number of observations waiting in the batch queue. */
-  get pendingCount(): number {
-    return this.batchQueue.length;
   }
 
   /**
@@ -220,17 +168,21 @@ export class Mind {
     extractedGoal: string,
     agent: AgentName
   ): Promise<string> {
-    this.currentChainId = generateId();
-    this.currentParentId = null;
+    const sessionKey = this.sessionKey(agent);
+    const newChainId = generateId();
+    this.chainIds.set(sessionKey, newChainId);
+    this.evictIfNeeded(this.chainIds);
+    this.parentIds.delete(sessionKey);
 
     const id = await this.cli.add(
       "intent",
-      `Intent: ${extractedGoal.slice(0, 100)}`,
-      `User message: ${message}\nExtracted goal: ${extractedGoal}\nChainId: ${this.currentChainId}`,
+      `Intent: ${extractedGoal.slice(0, INTENT_SUMMARY_MAX_LENGTH)}`,
+      `User message: ${message}\nExtracted goal: ${extractedGoal}\nChainId: ${newChainId}`,
       agent
     );
 
-    this.currentParentId = id;
+    this.parentIds.set(sessionKey, id);
+    this.evictIfNeeded(this.parentIds);
     return id;
   }
 
@@ -255,7 +207,7 @@ export class Mind {
 
     const markerId = await this.cli.add(
       "warning",
-      `[FORGOTTEN] ${entry.id}`,
+      `${FORGOTTEN_MARKER_PREFIX}${entry.id}`,
       `Reason: ${reason}\nOriginal id: ${entry.id}\nOriginal summary: ${entry.summary}`,
       agent
     );
@@ -362,9 +314,9 @@ export class Mind {
     const forgottenIds = new Set<string>();
     const forgottenSummaries = new Set<string>();
     for (const entry of allEntries) {
-      if (entry.summary.startsWith("[FORGOTTEN] ")) {
+      if (entry.summary.startsWith(FORGOTTEN_MARKER_PREFIX)) {
         const idFromSummary = entry.summary
-          .slice("[FORGOTTEN] ".length)
+          .slice(FORGOTTEN_MARKER_PREFIX.length)
           .trim();
         if (idFromSummary) {
           forgottenIds.add(idFromSummary);
@@ -383,13 +335,13 @@ export class Mind {
     }
 
     const cutoff = maxAgeDays
-      ? Date.now() - maxAgeDays * 24 * 60 * 60 * 1000
+      ? Date.now() - maxAgeDays * MS_PER_DAY
       : 0;
 
     // Filter: keep entries that are not forgotten and not too old
     const kept = allEntries.filter((entry) => {
       // Remove [FORGOTTEN] markers themselves
-      if (entry.summary.startsWith("[FORGOTTEN] ")) return false;
+      if (entry.summary.startsWith(FORGOTTEN_MARKER_PREFIX)) return false;
       // Remove entries whose IDs match a forgotten marker
       if (forgottenIds.has(entry.id)) return false;
       // Remove entries whose summaries match a forgotten marker
@@ -414,7 +366,7 @@ export class Mind {
     target: { id?: string; summary?: string }
   ): MemoryEntry {
     const nonMarkers = allEntries.filter(
-      (entry) => !entry.summary.startsWith("[FORGOTTEN] ")
+      (entry) => !entry.summary.startsWith(FORGOTTEN_MARKER_PREFIX)
     );
 
     if (target.id) {
@@ -454,7 +406,10 @@ export async function getMind(
   config?: Partial<PluginConfig>
 ): Promise<Mind> {
   if (!mindPromise) {
-    mindPromise = Mind.open(config);
+    mindPromise = Mind.open(config).catch((err) => {
+      mindPromise = null; // Clear cache so next call retries
+      throw err;
+    });
   }
   return mindPromise;
 }

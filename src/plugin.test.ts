@@ -80,7 +80,7 @@ vi.mock("./core/mnemoria-cli.js", () => {
 });
 
 import OcMnemoria from "./plugin.js";
-import { resetMind } from "./core/mind.js";
+import { getMind, resetMind } from "./core/mind.js";
 
 /** Create a mock ToolContext */
 function mockContext(agent = "build"): ToolContext {
@@ -120,7 +120,6 @@ describe("OcMnemoria plugin", () => {
 
   it("returns hook handlers", async () => {
     const result = await OcMnemoria({} as never);
-    expect(result["tool.execute.after"]).toBeTypeOf("function");
     expect(result["chat.message"]).toBeTypeOf("function");
     expect(result["experimental.chat.system.transform"]).toBeTypeOf("function");
   });
@@ -274,39 +273,6 @@ describe("compact tool", () => {
 
 // ─── Hooks ───────────────────────────────────────────────────────────────────
 
-describe("tool.execute.after hook", () => {
-  it("auto-captures read tool execution", async () => {
-    const result = await OcMnemoria({} as never);
-    const hook = result["tool.execute.after"] as (
-      input: Record<string, unknown>,
-      output: Record<string, unknown>
-    ) => Promise<void>;
-
-    await hook(
-      {
-        tool: "read",
-        args: { path: "/src/app.ts" },
-        sessionID: "session-1",
-        callID: "call-1",
-      },
-      { output: "function hello() { return 1; }" }
-    );
-  });
-
-  it("ignores non-tracked tools", async () => {
-    const result = await OcMnemoria({} as never);
-    const hook = result["tool.execute.after"] as (
-      input: Record<string, unknown>,
-      output: Record<string, unknown>
-    ) => Promise<void>;
-
-    await hook(
-      { tool: "custom_tool", args: {}, sessionID: "s1", callID: "c1" },
-      { output: "some output" }
-    );
-  });
-});
-
 describe("chat.message hook", () => {
   it("captures user intent from string message", async () => {
     const result = await OcMnemoria({} as never);
@@ -319,6 +285,11 @@ describe("chat.message hook", () => {
       { sessionID: "session-1", agent: "plan" },
       { message: "Fix the authentication flow in the login module" }
     );
+
+    // Verify intent was stored — getMind() returns the cached Mind whose CLI mock tracks add() calls
+    const mind = await getMind();
+    // mind.getCurrentChainId should now be set for the "plan" agent
+    expect(mind.getCurrentChainId("plan")).toBeTruthy();
   });
 
   it("handles object message with text property", async () => {
@@ -332,6 +303,10 @@ describe("chat.message hook", () => {
       { sessionID: "session-2", agent: "build" },
       { message: { text: "Refactor the user profiles module for clarity" } }
     );
+
+    // Verify intent was stored for the build agent
+    const mind = await getMind();
+    expect(mind.getCurrentChainId("build")).toBeTruthy();
   });
 
   it("skips very short messages", async () => {
@@ -345,6 +320,10 @@ describe("chat.message hook", () => {
       { sessionID: "session-3", agent: "ask" },
       { message: "hi" }
     );
+
+    // Short messages should not store any intent
+    const mind = await getMind();
+    expect(mind.getCurrentChainId("ask")).toBeNull();
   });
 });
 

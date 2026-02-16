@@ -2,15 +2,14 @@
  * oc-mnemoria — barrel exports
  */
 
-export { default as OcMnemoria, default } from "./plugin.js";
+export { default as OcMnemoria } from "./plugin.js";
+export { default } from "./plugin.js";
 export { Mind, getMind, resetMind } from "./core/mind.js";
 export { MnemoriaCli } from "./core/mnemoria-cli.js";
 export {
   generateId,
   estimateTokens,
   truncateToTokens,
-  extractKeyInfo,
-  classifyObservationType,
   extractUserIntent,
 } from "./utils/helpers.js";
 export type {
@@ -25,4 +24,5 @@ export type {
   ObservationMetadata,
   UserIntent,
 } from "./types.js";
-export { DEFAULT_CONFIG } from "./types.js";
+export { DEFAULT_CONFIG, ENTRY_TYPES } from "./types.js";
+export * from "./constants.js";

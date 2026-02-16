@@ -12,83 +12,91 @@ import { tool } from "@opencode-ai/plugin";
 import { getMind } from "./core/mind.js";
 import { MnemoriaCli } from "./core/mnemoria-cli.js";
 import {
-  extractKeyInfo,
-  classifyObservationType,
   extractUserIntent,
 } from "./utils/helpers.js";
-import type { AgentName, EntryType } from "./types.js";
+import { ENTRY_TYPES } from "./types.js";
+import type { AgentName, EntryType, SearchResult } from "./types.js";
+import {
+  DEFAULT_AGENT,
+  MAX_TRACKED_SESSIONS,
+  INTENT_DEDUP_SIMILARITY,
+  INTENT_MIN_EXTRACT_LENGTH,
+  INTENT_MAX_MESSAGE_LENGTH,
+  SEARCH_DEFAULT_LIMIT,
+  TIMELINE_DEFAULT_LIMIT,
+  TIMELINE_DEFAULT_REVERSE,
+  CONTEXT_MAX_RECENT_OBSERVATIONS,
+  CONTEXT_MAX_RELEVANT_MEMORIES,
+  CONTEXT_MAX_PAST_INTENTS,
+  GOAL_DISPLAY_MAX_LENGTH,
+} from "./constants.js";
 
-const DEFAULT_AGENT: AgentName = "build";
-
-/** Maximum number of sessions to track before evicting the oldest. */
-const MAX_SESSION_ENTRIES = 100;
-
-/** Track the current agent per session (bounded to prevent memory leaks). */
-const sessionAgentMap = new Map<string, AgentName>();
-
-function setSessionAgent(sessionID: string, agent: AgentName): void {
-  // Delete first so re-insertion moves the key to the end (Map preserves insertion order)
-  sessionAgentMap.delete(sessionID);
-  sessionAgentMap.set(sessionID, agent);
-
-  // Evict oldest entries when the map exceeds the cap
-  if (sessionAgentMap.size > MAX_SESSION_ENTRIES) {
-    const oldest = sessionAgentMap.keys().next().value;
-    if (oldest !== undefined) {
-      sessionAgentMap.delete(oldest);
-    }
-  }
-}
-
-function getSessionAgent(sessionID?: string): AgentName {
-  if (sessionID) {
-    return sessionAgentMap.get(sessionID) ?? DEFAULT_AGENT;
-  }
-  return DEFAULT_AGENT;
-}
-
-// ─── Circuit Breaker for Hook CLI Calls ──────────────────────────────────────
-
-/** Number of consecutive hook failures before the breaker opens. */
-const BREAKER_THRESHOLD = 5;
-/** How long (ms) the breaker stays open before allowing a retry. */
-const BREAKER_RESET_MS = 60_000;
-
+/** Counter for hook failures (aids debugging). */
 let hookFailureCount = 0;
-let breakerOpenedAt = 0;
+
+/** Resolve an unknown agent value to a valid AgentName. */
+function resolveAgent(value: unknown, fallback: AgentName = DEFAULT_AGENT): AgentName {
+  if (typeof value === "string" && value.length > 0) return value as AgentName;
+  return fallback;
+}
+
+/** Strip common intent prefixes before comparison. */
+function stripIntentPrefix(goal: string): string {
+  return goal.replace(/^(Fix|Refactor|Test|Implement|Understand):\s*/i, "");
+}
 
 /**
- * Returns true if the circuit breaker is open (hooks should skip CLI calls).
- * After BREAKER_RESET_MS, the breaker half-opens to allow a single retry.
+ * Check if the new intent is similar to the last stored intent for this session.
+ * Returns true if the intents are likely duplicates.
  */
-function isBreakerOpen(): boolean {
-  if (hookFailureCount < BREAKER_THRESHOLD) return false;
-  // Half-open: allow a retry after the reset window
-  if (Date.now() - breakerOpenedAt >= BREAKER_RESET_MS) return false;
-  return true;
+function isSimilarIntent(newGoal: string, lastGoal: string): boolean {
+  const newWords = new Set(stripIntentPrefix(newGoal).toLowerCase().split(/\s+/));
+  const lastWords = new Set(stripIntentPrefix(lastGoal).toLowerCase().split(/\s+/));
+
+  let intersection = 0;
+  for (const word of lastWords) {
+    if (newWords.has(word)) intersection++;
+  }
+
+  const union = newWords.size + lastWords.size - intersection;
+  if (union === 0) return true;
+
+  const similarity = intersection / union;
+  return similarity >= INTENT_DEDUP_SIMILARITY;
 }
 
-function recordHookSuccess(): void {
-  hookFailureCount = 0;
-  breakerOpenedAt = 0;
-}
+/** Encapsulated session state — prevents unbounded growth of loose Maps. */
+class SessionTracker {
+  private agents = new Map<string, AgentName>();
+  private lastIntents = new Map<string, string>();
 
-function recordHookFailure(): void {
-  hookFailureCount++;
-  if (hookFailureCount >= BREAKER_THRESHOLD) {
-    const now = Date.now();
-    const shouldOpen =
-      breakerOpenedAt === 0 || now - breakerOpenedAt >= BREAKER_RESET_MS;
-
-    if (shouldOpen) {
-      breakerOpenedAt = now;
-      console.error(
-        `[oc-mnemoria] Circuit breaker opened after ${BREAKER_THRESHOLD} consecutive failures. ` +
-          `Hooks will skip CLI calls for ${BREAKER_RESET_MS / 1000}s.`
-      );
+  setAgent(sessionID: string, agent: AgentName): void {
+    this.agents.delete(sessionID);
+    this.agents.set(sessionID, agent);
+    if (this.agents.size > MAX_TRACKED_SESSIONS) {
+      const oldest = this.agents.keys().next().value;
+      if (oldest !== undefined) {
+        this.agents.delete(oldest);
+        this.lastIntents.delete(oldest);
+      }
     }
   }
+
+  getAgent(sessionID?: string): AgentName {
+    if (sessionID) return this.agents.get(sessionID) ?? DEFAULT_AGENT;
+    return DEFAULT_AGENT;
+  }
+
+  getLastIntent(sessionID: string): string | undefined {
+    return this.lastIntents.get(sessionID);
+  }
+
+  setLastIntent(sessionID: string, goal: string): void {
+    this.lastIntents.set(sessionID, goal);
+  }
 }
+
+const sessions = new SessionTracker();
 
 const OcMnemoria: Plugin = async (_input: PluginInput) => {
   const available = await MnemoriaCli.isAvailable();
@@ -109,19 +117,7 @@ const OcMnemoria: Plugin = async (_input: PluginInput) => {
           "All agents share one memory store — entries are tagged with the creating agent.",
         args: {
           type: tool.schema
-            .enum([
-              "intent",
-              "discovery",
-              "decision",
-              "problem",
-              "solution",
-              "pattern",
-              "warning",
-              "success",
-              "refactor",
-              "bugfix",
-              "feature",
-            ])
+            .enum([...ENTRY_TYPES])
             .describe("Type of observation"),
           summary: tool.schema
             .string()
@@ -132,7 +128,7 @@ const OcMnemoria: Plugin = async (_input: PluginInput) => {
         },
         async execute(args, context) {
           const mind = await getMind();
-          const agentName = (context.agent as AgentName) || DEFAULT_AGENT;
+          const agentName = resolveAgent(context.agent);
           const id = await mind.remember({
             type: args.type as EntryType,
             summary: args.summary,
@@ -173,8 +169,8 @@ const OcMnemoria: Plugin = async (_input: PluginInput) => {
           const mind = await getMind();
           const results = await mind.search(
             args.query,
-            args.limit ?? 10,
-            args.agent as AgentName | undefined
+            args.limit ?? SEARCH_DEFAULT_LIMIT,
+            args.agent ? resolveAgent(args.agent) : undefined
           );
 
           if (results.length === 0) {
@@ -210,7 +206,7 @@ const OcMnemoria: Plugin = async (_input: PluginInput) => {
           const mind = await getMind();
           return await mind.ask(
             args.question,
-            args.agent as AgentName | undefined
+            args.agent ? resolveAgent(args.agent) : undefined
           );
         },
       }),
@@ -264,12 +260,12 @@ const OcMnemoria: Plugin = async (_input: PluginInput) => {
           const mind = await getMind();
           const observations = await mind.timeline(
             {
-              limit: args.limit ?? 20,
+              limit: args.limit ?? TIMELINE_DEFAULT_LIMIT,
               since: args.since,
               until: args.until,
-              reverse: args.reverse ?? true,
+              reverse: args.reverse ?? TIMELINE_DEFAULT_REVERSE,
             },
-            args.agent as AgentName | undefined
+            args.agent ? resolveAgent(args.agent) : undefined
           );
 
           if (observations.length === 0) {
@@ -315,7 +311,7 @@ const OcMnemoria: Plugin = async (_input: PluginInput) => {
           }
 
           const mind = await getMind();
-          const agentName = (context.agent as AgentName) || DEFAULT_AGENT;
+          const agentName = resolveAgent(context.agent);
           const result = await mind.forget(
             {
               id: args.id as string | undefined,
@@ -355,57 +351,13 @@ const OcMnemoria: Plugin = async (_input: PluginInput) => {
       }),
     },
 
-    "tool.execute.after": async (hookInput, hookOutput) => {
-      const toolName = hookInput.tool;
-      const toolOutput = hookOutput.output;
-      const sessionID = hookInput.sessionID;
-
-      if (
-        toolName === "read" ||
-        toolName === "bash" ||
-        toolName === "edit" ||
-        toolName === "write" ||
-        toolName === "grep" ||
-        toolName === "glob"
-      ) {
-        if (isBreakerOpen()) return;
-
-        try {
-          const agentName = getSessionAgent(sessionID);
-          const mind = await getMind();
-          const extracted = extractKeyInfo(
-            toolName,
-            toolOutput,
-            hookInput.args
-          );
-          const obsType = classifyObservationType(toolName, toolOutput);
-
-          // Queue observation for batched writing instead of writing immediately.
-          // This reduces CLI invocations during rapid tool use bursts.
-          mind.queueObservation({
-            type: obsType,
-            summary: extracted.summary,
-            content: extracted.content,
-            agent: agentName,
-          });
-          recordHookSuccess();
-        } catch (err) {
-          recordHookFailure();
-          console.error("[oc-mnemoria] Failed to remember tool use:", err);
-        }
-      }
-    },
-
     "chat.message": async (hookInput, hookOutput) => {
       try {
         const sessionID = hookInput.sessionID;
-        const agentName =
-          (hookInput.agent as AgentName) || DEFAULT_AGENT;
+        const agentName = resolveAgent(hookInput.agent);
 
         // Always track the session agent (cheap in-memory operation)
-        setSessionAgent(sessionID, agentName);
-
-        if (isBreakerOpen()) return;
+        sessions.setAgent(sessionID, agentName);
 
         const message = hookOutput.message;
         const mind = await getMind();
@@ -423,20 +375,31 @@ const OcMnemoria: Plugin = async (_input: PluginInput) => {
 
         if (
           messageText &&
-          messageText.length > 10 &&
-          messageText.length < 5000
+          messageText.length > INTENT_MIN_EXTRACT_LENGTH &&
+          messageText.length < INTENT_MAX_MESSAGE_LENGTH
         ) {
           const intent = extractUserIntent(messageText);
-          await mind.setIntent(messageText, intent.goal, agentName);
-          recordHookSuccess();
 
-          console.error(
-            `[oc-mnemoria] [${agentName}] Set intent: ${intent.goal.slice(0, 50)}`
-          );
+          // Check deduplication - skip if similar to last intent in this session
+          if (intent.shouldStore) {
+            const lastIntent = sessions.getLastIntent(sessionID);
+            if (lastIntent && isSimilarIntent(intent.goal, lastIntent)) {
+              return; // Skip - similar intent already stored
+            }
+
+            await mind.setIntent(messageText, intent.goal, agentName);
+            sessions.setLastIntent(sessionID, intent.goal);
+            console.error(
+              `[oc-mnemoria] [${agentName}] Set intent: ${intent.goal.slice(0, 50)}`
+            );
+          }
         }
       } catch (err) {
-        recordHookFailure();
-        console.error("[oc-mnemoria] Failed to capture intent:", err);
+        hookFailureCount++;
+        console.error(
+          `[oc-mnemoria] Failed to capture intent (failure #${hookFailureCount}):`,
+          err instanceof Error ? err.message : err
+        );
       }
     },
 
@@ -463,25 +426,26 @@ const OcMnemoria: Plugin = async (_input: PluginInput) => {
           ""
         );
 
-        // First get context without a query to find the latest intent
-        const initialContext = await mind.getContext();
+        // Single getContext() call — extract intent for a targeted search
+        const context = await mind.getContext();
 
-        // Extract the latest intent text to use as a relevance query
-        const intentObs = initialContext.recentObservations.find(
+        // Extract the latest intent to use as a relevance query
+        const intentObs = context.recentObservations.find(
           (obs) => obs.type === "intent"
         );
-        const contextQuery = intentObs?.summary.replace(/^Intent:\s*/i, "") ?? undefined;
+        const intentQuery = intentObs?.summary.replace(/^Intent:\s*/i, "") ?? undefined;
 
-        // Re-fetch context with the intent query to get relevant memories
-        const context = contextQuery
-          ? await mind.getContext(contextQuery)
-          : initialContext;
+        // Only search for relevant memories if we have an intent query
+        let relevantMemories: SearchResult[] = [];
+        if (intentQuery) {
+          relevantMemories = await mind.search(intentQuery, 5);
+        }
 
         const sections: string[] = [];
 
         if (context.recentObservations.length > 0) {
           const recentLines = context.recentObservations
-            .slice(0, 10)
+            .slice(0, CONTEXT_MAX_RECENT_OBSERVATIONS)
             .map((obs) => {
               const agentTag = obs.agent ? ` (${obs.agent})` : "";
               return `- [${obs.type}]${agentTag} ${obs.summary}`;
@@ -494,10 +458,10 @@ const OcMnemoria: Plugin = async (_input: PluginInput) => {
           );
         }
 
-        // Add relevant memories if the query found matches
-        if (context.relevantMemories.length > 0) {
-          const relevantLines = context.relevantMemories
-            .slice(0, 5)
+        // Add relevant memories if the search found matches
+        if (relevantMemories.length > 0) {
+          const relevantLines = relevantMemories
+            .slice(0, CONTEXT_MAX_RELEVANT_MEMORIES)
             .map((r) => {
               const agentTag = r.entry.agent_name ? ` (${r.entry.agent_name})` : "";
               return `- [${r.entry.entry_type}]${agentTag} ${r.entry.summary}`;
@@ -510,10 +474,10 @@ const OcMnemoria: Plugin = async (_input: PluginInput) => {
         );
         if (intentObservations.length > 0) {
           const intentLines = intentObservations
-            .slice(0, 3)
+            .slice(0, CONTEXT_MAX_PAST_INTENTS)
             .map((obs) => {
               const agentTag = obs.agent ? ` (via ${obs.agent})` : "";
-              return `- User goal${agentTag}: ${obs.content.slice(0, 150)}`;
+              return `- User goal${agentTag}: ${obs.content.slice(0, GOAL_DISPLAY_MAX_LENGTH)}`;
             });
           sections.push("## Past User Goals", ...intentLines, "");
         }

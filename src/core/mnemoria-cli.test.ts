@@ -9,13 +9,14 @@ import { promisify } from "node:util";
  * `vi.hoisted()` runs before `vi.mock()` factories, so we can define
  * our shared mock there and reference it inside the factory.
  */
-const { mockExecFileAsync, mockedExistsSync, mockedReadFileSync } = vi.hoisted(() => {
+const { mockExecFileAsync, mockedExistsSync, mockedReadFileSync, mockedReadFile } = vi.hoisted(() => {
   return {
     mockExecFileAsync: vi.fn<
       (...args: unknown[]) => Promise<{ stdout: string; stderr: string }>
     >(),
     mockedExistsSync: vi.fn<(path: string) => boolean>(),
     mockedReadFileSync: vi.fn<(...args: unknown[]) => string>(),
+    mockedReadFile: vi.fn<(...args: unknown[]) => Promise<string>>(),
   };
 });
 
@@ -32,6 +33,15 @@ vi.mock("node:fs", () => ({
   existsSync: mockedExistsSync,
   readFileSync: mockedReadFileSync,
   unlinkSync: vi.fn(),
+  rmSync: vi.fn(),
+  cpSync: vi.fn(),
+  mkdirSync: vi.fn(),
+  renameSync: vi.fn(),
+}));
+
+vi.mock("node:fs/promises", () => ({
+  readFile: mockedReadFile,
+  unlink: vi.fn().mockResolvedValue(undefined),
 }));
 
 import { MnemoriaCli } from "./mnemoria-cli.js";
@@ -348,7 +358,7 @@ describe("MnemoriaCli", () => {
         },
       ];
       mockExecResult("Exported to /tmp/test.json");
-      mockedReadFileSync.mockReturnValue(JSON.stringify(entries));
+      mockedReadFile.mockResolvedValue(JSON.stringify(entries));
 
       const cli = new MnemoriaCli("/proj");
       const result = await cli.exportAll();

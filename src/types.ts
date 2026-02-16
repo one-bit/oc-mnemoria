@@ -18,6 +18,21 @@ export type EntryType =
   | "bugfix"
   | "feature";
 
+/** All valid entry type values, usable at runtime for validation. */
+export const ENTRY_TYPES = [
+  "intent",
+  "discovery",
+  "decision",
+  "problem",
+  "solution",
+  "pattern",
+  "warning",
+  "success",
+  "refactor",
+  "bugfix",
+  "feature",
+] as const satisfies readonly EntryType[];
+
 /**
  * A memory entry as returned by the mnemoria CLI (JSON output).
  */
@@ -122,4 +137,8 @@ export interface UserIntent {
   goal: string;
   context: string[];
   filePaths: string[];
+  /** Weighted score from intent category matching */
+  score: number;
+  /** Whether this intent meets the minimum threshold to be stored */
+  shouldStore: boolean;
 }

@@ -3,8 +3,6 @@ import {
   generateId,
   estimateTokens,
   truncateToTokens,
-  extractKeyInfo,
-  classifyObservationType,
   extractUserIntent,
 } from "./helpers.js";
 
@@ -78,187 +76,6 @@ describe("truncateToTokens", () => {
   });
 });
 
-// ─── extractKeyInfo ──────────────────────────────────────────────────────────
-
-describe("extractKeyInfo", () => {
-  describe("read tool", () => {
-    it("extracts file read info with path and functions", () => {
-      const output = [
-        "function hello() {}",
-        "const world = 1;",
-        "class Foo {}",
-      ].join("\n");
-      const result = extractKeyInfo("read", output, { path: "/src/app.ts" });
-      expect(result.summary).toBe("Read file: app.ts (3 lines)");
-      expect(result.filePaths).toEqual(["/src/app.ts"]);
-      expect(result.findings.length).toBeGreaterThan(0);
-      expect(result.findings[0]).toContain("hello");
-    });
-
-    it("truncates large file output", () => {
-      const lines = Array.from({ length: 100 }, (_, i) => `line ${i}`);
-      const output = lines.join("\n");
-      const result = extractKeyInfo("read", output, { path: "/big.ts" });
-      expect(result.content).toContain("lines omitted");
-    });
-
-    it("uses file arg fallback", () => {
-      const result = extractKeyInfo("read", "x", { file: "/src/alt.ts" });
-      expect(result.filePaths).toEqual(["/src/alt.ts"]);
-    });
-
-    it("defaults to unknown when no path given", () => {
-      const result = extractKeyInfo("read", "x");
-      expect(result.summary).toContain("unknown");
-    });
-  });
-
-  describe("bash tool", () => {
-    it("detects errors in output", () => {
-      const result = extractKeyInfo("bash", "Error: cannot compile", {
-        command: "tsc",
-      });
-      expect(result.summary).toContain("with errors");
-      expect(result.findings).toContain("Command produced errors");
-    });
-
-    it("detects success in output", () => {
-      const result = extractKeyInfo("bash", "Build success!", {
-        command: "npm run build",
-      });
-      expect(result.summary).toContain("succeeded");
-    });
-
-    it("does not flag 0 errors as error", () => {
-      const result = extractKeyInfo("bash", "0 errors found", {
-        command: "tsc",
-      });
-      expect(result.summary).not.toContain("with errors");
-    });
-
-    it("extracts file paths from output", () => {
-      const output = "compiled src/app.ts\ncompiled src/index.ts\n";
-      const result = extractKeyInfo("bash", output, { command: "tsc" });
-      expect(result.filePaths.length).toBeGreaterThan(0);
-    });
-
-    it("truncates large bash output", () => {
-      const lines = Array.from({ length: 50 }, (_, i) => `line ${i}`);
-      const result = extractKeyInfo("bash", lines.join("\n"), {
-        command: "big cmd",
-      });
-      expect(result.content).toContain("lines omitted");
-    });
-  });
-
-  describe("edit tool", () => {
-    it("detects new file creation", () => {
-      const result = extractKeyInfo("edit", "new file created", {
-        path: "/src/new.ts",
-      });
-      expect(result.summary).toContain("Created");
-      expect(result.filePaths).toEqual(["/src/new.ts"]);
-    });
-
-    it("detects editing existing file", () => {
-      const result = extractKeyInfo("edit", "changes applied", {
-        path: "/src/app.ts",
-      });
-      expect(result.summary).toContain("Edited");
-    });
-  });
-
-  describe("write tool", () => {
-    it("extracts write info", () => {
-      const result = extractKeyInfo("write", "wrote 100 bytes", {
-        path: "/src/out.ts",
-      });
-      expect(result.summary).toContain("Wrote file: out.ts");
-      expect(result.filePaths).toEqual(["/src/out.ts"]);
-    });
-  });
-
-  describe("grep / glob tools", () => {
-    it("extracts search results", () => {
-      const output = "src/app.ts:10: const x = 1\nsrc/util.ts:5: const y = 2";
-      const result = extractKeyInfo("grep", output, { pattern: "const" });
-      expect(result.summary).toContain('grep: "const"');
-      expect(result.findings[0]).toContain("2 results");
-    });
-
-    it("handles glob results", () => {
-      const output = "src/app.ts\nsrc/index.ts";
-      const result = extractKeyInfo("glob", output, { pattern: "*.ts" });
-      expect(result.summary).toContain("glob");
-      expect(result.patterns).toEqual(["*.ts"]);
-    });
-  });
-
-  describe("unknown tool", () => {
-    it("returns generic extraction", () => {
-      const result = extractKeyInfo("custom_tool", "some output");
-      expect(result.summary).toBe("Tool custom_tool executed");
-      expect(result.filePaths).toEqual([]);
-    });
-  });
-});
-
-// ─── classifyObservationType ─────────────────────────────────────────────────
-
-describe("classifyObservationType", () => {
-  it("classifies errors as problem", () => {
-    expect(classifyObservationType("bash", "Fatal error occurred")).toBe(
-      "problem"
-    );
-    expect(classifyObservationType("bash", "exception thrown")).toBe("problem");
-  });
-
-  it("does not classify '0 error' as problem", () => {
-    expect(classifyObservationType("bash", "0 errors found")).not.toBe(
-      "problem"
-    );
-  });
-
-  it("classifies warnings", () => {
-    expect(classifyObservationType("bash", "warning: unused variable")).toBe(
-      "warning"
-    );
-    expect(classifyObservationType("bash", "deprecated function used")).toBe(
-      "warning"
-    );
-  });
-
-  it("classifies success", () => {
-    expect(classifyObservationType("bash", "Build passed!")).toBe("success");
-  });
-
-  it("classifies read/grep/glob as discovery", () => {
-    expect(classifyObservationType("read", "file contents")).toBe("discovery");
-    expect(classifyObservationType("grep", "search results")).toBe("discovery");
-    expect(classifyObservationType("glob", "file list")).toBe("discovery");
-  });
-
-  it("classifies edit with fix as bugfix", () => {
-    expect(classifyObservationType("edit", "fix applied")).toBe("bugfix");
-  });
-
-  it("classifies edit without fix as refactor", () => {
-    expect(classifyObservationType("edit", "renamed variable")).toBe("refactor");
-  });
-
-  it("classifies write as feature", () => {
-    expect(classifyObservationType("write", "file written")).toBe("feature");
-  });
-
-  it("classifies bash without special keywords as discovery", () => {
-    expect(classifyObservationType("bash", "ls output")).toBe("discovery");
-  });
-
-  it("classifies unknown tool as discovery", () => {
-    expect(classifyObservationType("unknown", "output")).toBe("discovery");
-  });
-});
-
 // ─── extractUserIntent ───────────────────────────────────────────────────────
 
 describe("extractUserIntent", () => {
@@ -316,5 +133,31 @@ describe("extractUserIntent", () => {
     const result = extractUserIntent("hello world");
     expect(result.context).toEqual([]);
     expect(result.goal).toBe("hello world");
+  });
+
+  it("marks strong intents as shouldStore: true", () => {
+    const result = extractUserIntent("Fix the broken authentication flow in the app");
+    expect(result.shouldStore).toBe(true);
+    expect(result.score).toBeGreaterThanOrEqual(2);
+  });
+
+  it("marks weak intents as shouldStore: false", () => {
+    // "hello world" matches no strong patterns, score should be below threshold
+    const result = extractUserIntent("hello world this is a message");
+    expect(result.shouldStore).toBe(false);
+    expect(result.score).toBeLessThan(2);
+  });
+
+  it("requires minimum message length for shouldStore", () => {
+    // "fix bug" has bugfix keywords but is under 20 chars
+    const result = extractUserIntent("fix bug");
+    expect(result.shouldStore).toBe(false);
+  });
+
+  it("returns correct score for bugfix intent", () => {
+    // "bug" (3) + "fix" (2) + "broken" (3) = 8
+    const result = extractUserIntent("Fix the broken bug in the authentication");
+    expect(result.score).toBe(8);
+    expect(result.shouldStore).toBe(true);
   });
 });

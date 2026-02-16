@@ -60,7 +60,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
-    "@opencode-ai/plugin": "latest",
+    "@opencode-ai/plugin": "^1.2.4",
     "@types/node": "^22.0.0",
     "eslint": "^9.39.2",
     "tsup": "^8.0.0",

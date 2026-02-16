@@ -111,7 +111,7 @@ describe("rememberWithContext", () => {
   it("includes chain ID when intent is set", async () => {
     const mind = await Mind.open();
     await mind.setIntent("fix auth", "Fix: fix auth", "build");
-    expect(mind.getCurrentChainId()).not.toBeNull();
+    expect(mind.getCurrentChainId("build")).not.toBeNull();
     const id = await mind.rememberWithContext({
       type: "discovery",
       summary: "Found issue",
@@ -127,9 +127,9 @@ describe("rememberWithContext", () => {
 describe("setIntent", () => {
   it("creates a chain ID", async () => {
     const mind = await Mind.open();
-    expect(mind.getCurrentChainId()).toBeNull();
+    expect(mind.getCurrentChainId("plan")).toBeNull();
     await mind.setIntent("fix bug", "Fix: fix bug", "plan");
-    const chainId = mind.getCurrentChainId();
+    const chainId = mind.getCurrentChainId("plan");
     expect(chainId).toBeTruthy();
     expect(chainId?.length).toBe(16);
   });
@@ -137,9 +137,9 @@ describe("setIntent", () => {
   it("resets chain on new intent", async () => {
     const mind = await Mind.open();
     await mind.setIntent("first task", "Implement: first task", "build");
-    const chain1 = mind.getCurrentChainId();
+    const chain1 = mind.getCurrentChainId("build");
     await mind.setIntent("second task", "Fix: second task", "build");
-    const chain2 = mind.getCurrentChainId();
+    const chain2 = mind.getCurrentChainId("build");
     expect(chain1).not.toBe(chain2);
   });
 });
