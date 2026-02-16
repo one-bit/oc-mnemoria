@@ -98,27 +98,30 @@ mnemoria --path .opencode search -a build "authentication"
 mnemoria --path .opencode timeline -a plan
 ```
 
-### Automatic capture
+### Intent capture
 
-The plugin automatically captures context from tool usage:
+The plugin automatically extracts user intents from chat messages via the
+`chat.message` hook. When a user describes a goal or task, the plugin
+categorizes it (e.g. fix, refactor, feature) and stores it in the shared
+memory, tagged with the current agent. Duplicate intents within the same
+session are deduplicated.
 
-| Tool   | What gets stored                          |
-|--------|-------------------------------------------|
-| `read` | File paths, function names, line counts   |
-| `bash` | Commands run, success/failure, file paths |
-| `edit` | Files modified, type of change            |
-| `write`| Files created                             |
-| `grep` | Search patterns, result counts            |
-| `glob` | Search patterns, matched files            |
-
-Each observation is linked to the user's intent (extracted from the
-conversation) via chain IDs, so any agent can trace *why* something was done.
+Agents can also store memories explicitly using the `remember` tool for
+discoveries, decisions, solutions, and other observations worth preserving.
 
 ### System prompt injection
 
-At the start of each session, recent observations and past user goals are
-injected into the system prompt. Each entry shows which agent created it,
-giving the current agent immediate cross-agent context.
+At the start of each session, the plugin injects cross-agent context into
+the system prompt via the `experimental.chat.system.transform` hook:
+
+- **Memory guidance** — instructions for when to use `search_memory`,
+  `ask_memory`, and `remember`
+- **Recent context** — the latest memories from the shared store, each
+  showing which agent created it
+- **Relevant memories** — search results matched against the current user
+  intent (if one exists)
+- **Past user goals** — intents from previous sessions so the agent
+  understands prior work
 
 ## Tools
 
