@@ -130,12 +130,12 @@ install_commands() {
         commands_source="$temp_dir/oc-mnemoria-main/commands"
     fi
 
-    target_dir="$HOME/.config/opencode/commands"
+    target_dir="$OPENCODE_DIR/commands"
     mkdir -p "$target_dir"
 
     if [ -d "$commands_source" ]; then
-        cp -f "$commands_source"/*.md "$target_dir/" 2>/dev/null || true
-        echo "   Installed commands to $target_dir"
+        cp -f "$commands_source"/mn-*.md "$target_dir/" 2>/dev/null || true
+        echo "   Installed mn-* commands to $target_dir"
     else
         echo "   Warning: Could not find commands to install"
     fi
@@ -145,7 +145,7 @@ echo "2. Installing commands..."
 install_commands
 echo ""
 
-# ── Step 3: Install memory-judge agent ────────────────────────────────────────
+# ── Step 3: Install oc-mnemoria-judge agent ───────────────────────────────────
 
 AGENTS_DIR="agents"
 
@@ -180,7 +180,7 @@ install_agents() {
     fi
 }
 
-echo "3. Installing memory-judge agent..."
+echo "3. Installing oc-mnemoria-judge agent..."
 install_agents
 echo ""
 
@@ -194,17 +194,18 @@ echo "Installed compatibility setup for current OpenCode plugin behavior:"
 echo "  - $PROJECT_DIR/$CONFIG_FILE"
 echo "  - $PACKAGE_FILE"
 echo "  - $PLUGIN_FILE"
-echo "  - $PROJECT_DIR/.opencode/agents/"
+echo "  - $OPENCODE_DIR/commands/ (mn-* slash commands)"
+echo "  - $OPENCODE_DIR/agents/"
 echo ""
 echo "Next steps:"
 echo "  1. Restart OpenCode"
-echo "  2. Run /memory stats to verify"
-echo "  3. Try @memory-judge to test the memory judge agent"
+echo "  2. Run /mn-stats to verify"
+echo "  3. Try @oc-mnemoria-judge to test the memory judge agent"
 echo ""
 echo "Shared memory store will be created at:"
 echo "  .opencode/mnemoria/"
 echo ""
-echo "Memory-judge agent available at:"
-echo "  .opencode/agents/memory-judge.md"
+echo "oc-mnemoria-judge agent available at:"
+echo "  .opencode/agents/oc-mnemoria-judge.md"
 echo "  Edit this file to customize the model or behavior"
 echo ""

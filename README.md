@@ -42,94 +42,26 @@ BM25 + semantic search, CRC32 checksum chains, and corruption recovery.
 
 ## Installation
 
-The easiest way to install oc-mnemoria in a project is to run the install script:
+Run the install script in your project directory:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/one-bit/oc-mnemoria/main/install.sh | sh
 ```
 
-The script installs the `mnemoria` CLI (if needed), configures a compatibility
-plugin setup for current OpenCode behavior, and installs `/memory` slash
-commands.
+The script:
 
----
+1. Installs the `mnemoria` CLI (via `cargo install` if needed)
+2. Configures the compatibility plugin setup (`opencode.json`, `.opencode/package.json`, `.opencode/plugins/oc-mnemoria.js`)
+3. Installs `/mn-*` slash commands to `.opencode/commands/`
+4. Installs the oc-mnemoria-judge subagent to `.opencode/agents/`
 
-If you prefer to install manually:
-
-### 1. Install the mnemoria CLI
-
-```sh
-cargo install mnemoria
-```
-
-### 2. Add the plugin (recommended compatibility setup)
-
-This method avoids current OpenCode npm plugin loader edge-cases and works on
-versions where direct npm plugin config fails with errors like:
-
-- `BunInstallFailedError` for `oc-mnemoria/plugin`
-- `TypeError: fn is not a function`
-
-Create these files in your project:
-
-`opencode.json`
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json"
-}
-```
-
-`.opencode/package.json`
-
-```json
-{
-  "dependencies": {
-    "oc-mnemoria": "latest"
-  }
-}
-```
-
-`.opencode/plugins/oc-mnemoria.js`
-
-```js
-import OcMnemoria from "oc-mnemoria/plugin"
-
-export const OcMnemoriaPlugin = async (ctx) => OcMnemoria(ctx)
-```
-
-Then restart OpenCode.
-
-### 3. Alternative: direct npm plugin config
-
-If your OpenCode version supports loading `oc-mnemoria` directly, use:
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "plugin": ["oc-mnemoria"]
-}
-```
-
-If you see either error above, switch to the compatibility install in Step 2.
-
-### 4. Verify installation
-
-After restarting OpenCode, run:
+After installation, restart OpenCode and run:
 
 ```sh
-/memory stats
+/mn-stats
 ```
 
 You should see memory store statistics (entry count, file size, timestamps).
-
-### 5. Install slash commands (optional)
-
-Copy the `commands/` directory to your OpenCode config:
-
-```sh
-cp commands/*.md ~/.config/opencode/commands/
-```
 
 ## How it works
 
@@ -200,9 +132,9 @@ giving the current agent immediate cross-agent context.
 | `forget`        | Mark a memory as obsolete (append-only tombstone)   |
 | `compact`       | Remove forgotten entries/markers and optionally prune old data |
 
-## Memory Judge Subagent
+## oc-mnemoria-judge Subagent
 
-The install script includes a `memory-judge` **subagent** (mode: `subagent`) that helps decide what should be remembered. This provides a lightweight way to get a second opinion on whether content is worth storing.
+The install script includes an `oc-mnemoria-judge` **subagent** (mode: `subagent`) that helps decide what should be remembered. This provides a lightweight way to get a second opinion on whether content is worth storing.
 
 **What is a subagent?**  
 Subagents are specialized AI assistants that can be invoked manually via `@` mentions or automatically by primary agents via the Task tool. Unlike primary agents (Build, Plan), subagents are designed for specific tasks and run in their own isolated sessions.
@@ -212,7 +144,7 @@ Subagents are specialized AI assistants that can be invoked manually via `@` men
 The plugin automatically captures obvious intents using fast heuristics. For uncertain cases, you can invoke the memory judge subagent:
 
 ```
-@memory-judge Should I remember: "We decided to use PostgreSQL instead of MongoDB"
+@oc-mnemoria-judge Should I remember: "We decided to use PostgreSQL instead of MongoDB"
 ```
 
 The subagent will analyze the content and respond with:
@@ -221,34 +153,36 @@ The subagent will analyze the content and respond with:
 - Suggested entry type
 - A summary for storage
 
-**Note:** The memory-judge is configured as `mode: subagent` in `.opencode/agents/memory-judge.md`, making it available for manual invocation but not appearing as a primary agent in the Tab-switching menu.
+**Note:** The oc-mnemoria-judge is configured as `mode: subagent` in `.opencode/agents/oc-mnemoria-judge.md`, making it available for manual invocation but not appearing as a primary agent in the Tab-switching menu.
 
-### Changing the model
+### Setting a model
 
-The memory-judge subagent uses `opencode/kimi-k2.5-free` by default. To use a different model:
+The oc-mnemoria-judge subagent does **not** set a model by default — it will
+use whatever model OpenCode assigns. Since this subagent performs a simple
+YES/NO classification, you should override it with a **low-cost model** to
+avoid unnecessary spend.
 
-1. Edit `.opencode/agents/memory-judge.md`:
+Add an agent model override in your `opencode.json`:
 
-```markdown
----
-description: Lightweight agent that analyzes content and decides if it should be remembered
-mode: subagent  # This makes it a subagent (not a primary agent)
-model: anthropic/claude-haiku-4-5-20251001  # Change this line
-temperature: 0.1
-tools: {}
-hidden: false
----
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "agent": {
+    "oc-mnemoria-judge": {
+      "model": "anthropic/claude-haiku-4-5-20251001"
+    }
+  }
+}
 ```
 
-2. Restart OpenCode
-
-Any model available in your OpenCode instance can be used. Run `/models` to see available options.
+Any model available in your OpenCode instance can be used. Run `/models` to
+see available options.
 
 ### Customizing behavior
 
-You can also edit the agent's configuration and system prompt in the same file to change:
-- **Model**: Change which LLM powers the subagent (see above)
-- **Mode**: Keep as `subagent` for manual invocation via `@memory-judge`, or change to `primary` if you want it as a main agent
+You can edit the agent's configuration and system prompt in
+`.opencode/agents/oc-mnemoria-judge.md` to change:
+- **Mode**: Keep as `subagent` for manual invocation via `@oc-mnemoria-judge`, or change to `primary` if you want it as a main agent
 - **Tools**: Add tools if you want the subagent to perform actions (currently set to `{}` for safety)
 - **Hidden**: Set to `true` to hide from `@` autocomplete (can still be invoked programmatically)
 - **System prompt**: Change what types of content should be remembered, response format, decision criteria, examples
@@ -264,13 +198,13 @@ Observations are categorized when stored:
 
 | Command              | Description                          |
 |----------------------|--------------------------------------|
-| `/memory ask <q>`    | Ask about past decisions             |
-| `/memory search <q>` | Search memories                      |
-| `/memory stats`      | Show memory statistics               |
-| `/memory recent`     | Show recent memories                 |
-| `/memory timeline`   | Chronological view                   |
-| `/memory forget ...` | Mark a memory as forgotten/obsolete  |
-| `/memory compact`    | Compact store by removing forgotten data |
+| `/mn-ask <q>`        | Ask about past decisions             |
+| `/mn-search <q>`     | Search memories                      |
+| `/mn-stats`          | Show memory statistics               |
+| `/mn-recent`         | Show recent memories                 |
+| `/mn-timeline`       | Chronological view                   |
+| `/mn-forget ...`     | Mark a memory as forgotten/obsolete  |
+| `/mn-compact`        | Compact store by removing forgotten data |
 
 ## Inspecting memories from the command line
 
@@ -387,15 +321,15 @@ maintenance flow:
 Use slash commands:
 
 ```sh
-/memory search flaky test timeout
-/memory forget id=8d9f... reason="Superseded by retry policy"
-/memory compact
+/mn-search flaky test timeout
+/mn-forget id=8d9f... reason="Superseded by retry policy"
+/mn-compact
 ```
 
 Optionally prune old entries during compaction:
 
 ```sh
-/memory compact 90
+/mn-compact 90
 ```
 
 (`90` means `maxAgeDays=90`)

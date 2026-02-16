@@ -1,11 +1,10 @@
 ---
-# Memory Judge Subagent Configuration
-# This is a subagent (mode: subagent) that can be invoked via @memory-judge
+# oc-mnemoria-judge Subagent Configuration
+# This is a subagent (mode: subagent) that can be invoked via @oc-mnemoria-judge
 # Subagents are specialized assistants that run in isolated sessions
 # Keep mode: subagent for manual invocation, or change to primary for main agent
 description: Lightweight subagent that analyzes content and decides if it should be remembered in the shared memory store
 mode: subagent
-model: opencode/kimi-k2.5-free
 temperature: 0.1
 tools: {}
 hidden: false
