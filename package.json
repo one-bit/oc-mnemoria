@@ -1,6 +1,6 @@
 {
   "name": "oc-mnemoria",
-  "version": "0.1.1",
+  "version": "0.3.3",
   "description": "Persistent shared memory (hive mind) for OpenCode agents, powered by the mnemoria Rust engine",
   "type": "module",
   "main": "dist/index.js",
