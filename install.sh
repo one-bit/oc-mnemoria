@@ -145,6 +145,45 @@ echo "2. Installing commands..."
 install_commands
 echo ""
 
+# ── Step 3: Install memory-judge agent ────────────────────────────────────────
+
+AGENTS_DIR="agents"
+
+install_agents() {
+    cwd="$(pwd)"
+    script_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+    agents_source=""
+
+    if [ -d "$cwd/$AGENTS_DIR" ]; then
+        agents_source="$cwd/$AGENTS_DIR"
+    elif [ -d "$script_dir/$AGENTS_DIR" ]; then
+        agents_source="$script_dir/$AGENTS_DIR"
+    elif [ -d "$script_dir/../agents" ]; then
+        agents_source="$script_dir/../agents"
+    fi
+
+    if [ -z "$agents_source" ]; then
+        echo "   Downloading agents from GitHub..."
+        temp_dir="$(mktemp -d)"
+        curl -sSL "https://github.com/$REPO/archive/refs/heads/main.tar.gz" | tar -xz -C "$temp_dir"
+        agents_source="$temp_dir/oc-mnemoria-main/agents"
+    fi
+
+    target_dir="$PROJECT_DIR/.opencode/agents"
+    mkdir -p "$target_dir"
+
+    if [ -d "$agents_source" ]; then
+        cp -f "$agents_source"/*.md "$target_dir/" 2>/dev/null || true
+        echo "   Installed agents to $target_dir"
+    else
+        echo "   Warning: Could not find agents to install"
+    fi
+}
+
+echo "3. Installing memory-judge agent..."
+install_agents
+echo ""
+
 # ── Done ─────────────────────────────────────────────────────────────────────
 
 echo "=========================================="
@@ -155,11 +194,17 @@ echo "Installed compatibility setup for current OpenCode plugin behavior:"
 echo "  - $PROJECT_DIR/$CONFIG_FILE"
 echo "  - $PACKAGE_FILE"
 echo "  - $PLUGIN_FILE"
+echo "  - $PROJECT_DIR/.opencode/agents/"
 echo ""
 echo "Next steps:"
 echo "  1. Restart OpenCode"
 echo "  2. Run /memory stats to verify"
+echo "  3. Try @memory-judge to test the memory judge agent"
 echo ""
 echo "Shared memory store will be created at:"
 echo "  .opencode/mnemoria/"
+echo ""
+echo "Memory-judge agent available at:"
+echo "  .opencode/agents/memory-judge.md"
+echo "  Edit this file to customize the model or behavior"
 echo ""

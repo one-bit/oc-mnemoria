@@ -200,6 +200,59 @@ giving the current agent immediate cross-agent context.
 | `forget`        | Mark a memory as obsolete (append-only tombstone)   |
 | `compact`       | Remove forgotten entries/markers and optionally prune old data |
 
+## Memory Judge Subagent
+
+The install script includes a `memory-judge` **subagent** (mode: `subagent`) that helps decide what should be remembered. This provides a lightweight way to get a second opinion on whether content is worth storing.
+
+**What is a subagent?**  
+Subagents are specialized AI assistants that can be invoked manually via `@` mentions or automatically by primary agents via the Task tool. Unlike primary agents (Build, Plan), subagents are designed for specific tasks and run in their own isolated sessions.
+
+### How it works
+
+The plugin automatically captures obvious intents using fast heuristics. For uncertain cases, you can invoke the memory judge subagent:
+
+```
+@memory-judge Should I remember: "We decided to use PostgreSQL instead of MongoDB"
+```
+
+The subagent will analyze the content and respond with:
+- A YES/NO decision
+- Brief reasoning
+- Suggested entry type
+- A summary for storage
+
+**Note:** The memory-judge is configured as `mode: subagent` in `.opencode/agents/memory-judge.md`, making it available for manual invocation but not appearing as a primary agent in the Tab-switching menu.
+
+### Changing the model
+
+The memory-judge subagent uses `opencode/kimi-k2.5-free` by default. To use a different model:
+
+1. Edit `.opencode/agents/memory-judge.md`:
+
+```markdown
+---
+description: Lightweight agent that analyzes content and decides if it should be remembered
+mode: subagent  # This makes it a subagent (not a primary agent)
+model: anthropic/claude-haiku-4-5-20251001  # Change this line
+temperature: 0.1
+tools: {}
+hidden: false
+---
+```
+
+2. Restart OpenCode
+
+Any model available in your OpenCode instance can be used. Run `/models` to see available options.
+
+### Customizing behavior
+
+You can also edit the agent's configuration and system prompt in the same file to change:
+- **Model**: Change which LLM powers the subagent (see above)
+- **Mode**: Keep as `subagent` for manual invocation via `@memory-judge`, or change to `primary` if you want it as a main agent
+- **Tools**: Add tools if you want the subagent to perform actions (currently set to `{}` for safety)
+- **Hidden**: Set to `true` to hide from `@` autocomplete (can still be invoked programmatically)
+- **System prompt**: Change what types of content should be remembered, response format, decision criteria, examples
+
 ### Entry types
 
 Observations are categorized when stored:
