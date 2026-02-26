@@ -53,7 +53,6 @@ The script:
 1. Installs the `mnemoria` CLI (via `cargo install` if needed)
 2. Configures the compatibility plugin setup (`opencode.json`, `.opencode/package.json`, `.opencode/plugins/oc-mnemoria.js`)
 3. Installs `/mn-*` slash commands to `.opencode/commands/`
-4. Installs the oc-mnemoria-judge subagent to `.opencode/agents/`
 
 After installation, restart OpenCode and run:
 
@@ -134,61 +133,6 @@ the system prompt via the `experimental.chat.system.transform` hook:
 | `timeline`      | Browse memories chronologically (all agents)        |
 | `forget`        | Mark a memory as obsolete (append-only tombstone)   |
 | `compact`       | Remove forgotten entries/markers and optionally prune old data |
-
-## oc-mnemoria-judge Subagent
-
-The install script includes an `oc-mnemoria-judge` **subagent** (mode: `subagent`) that helps decide what should be remembered. This provides a lightweight way to get a second opinion on whether content is worth storing.
-
-**What is a subagent?**  
-Subagents are specialized AI assistants that can be invoked manually via `@` mentions or automatically by primary agents via the Task tool. Unlike primary agents (Build, Plan), subagents are designed for specific tasks and run in their own isolated sessions.
-
-### How it works
-
-The plugin automatically captures obvious intents using fast heuristics. For uncertain cases, you can invoke the memory judge subagent:
-
-```
-@oc-mnemoria-judge Should I remember: "We decided to use PostgreSQL instead of MongoDB"
-```
-
-The subagent will analyze the content and respond with:
-- A YES/NO decision
-- Brief reasoning
-- Suggested entry type
-- A summary for storage
-
-**Note:** The oc-mnemoria-judge is configured as `mode: subagent` in `.opencode/agents/oc-mnemoria-judge.md`, making it available for manual invocation but not appearing as a primary agent in the Tab-switching menu.
-
-### Setting a model
-
-The oc-mnemoria-judge subagent does **not** set a model by default — it will
-use whatever model OpenCode assigns. Since this subagent performs a simple
-YES/NO classification, you should override it with a **low-cost model** to
-avoid unnecessary spend.
-
-Add an agent model override in your `opencode.json`:
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "agent": {
-    "oc-mnemoria-judge": {
-      "model": "anthropic/claude-haiku-4-5-20251001"
-    }
-  }
-}
-```
-
-Any model available in your OpenCode instance can be used. Run `/models` to
-see available options.
-
-### Customizing behavior
-
-You can edit the agent's configuration and system prompt in
-`.opencode/agents/oc-mnemoria-judge.md` to change:
-- **Mode**: Keep as `subagent` for manual invocation via `@oc-mnemoria-judge`, or change to `primary` if you want it as a main agent
-- **Tools**: Add tools if you want the subagent to perform actions (currently set to `{}` for safety)
-- **Hidden**: Set to `true` to hide from `@` autocomplete (can still be invoked programmatically)
-- **System prompt**: Change what types of content should be remembered, response format, decision criteria, examples
 
 ### Entry types
 

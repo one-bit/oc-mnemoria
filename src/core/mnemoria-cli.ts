@@ -1,5 +1,5 @@
 /**
- * Wrapper around the `mnemoria` CLI binary (v0.3.1+).
+ * Wrapper around the `mnemoria` CLI binary (v0.3.4+).
  *
  * All interaction with the Rust mnemoria engine goes through this module.
  * Each method shells out to the `mnemoria` binary, parses the output, and
@@ -202,7 +202,7 @@ export class MnemoriaCli {
   /**
    * Add a memory entry. Returns the entry ID.
    *
-   * `agent` is required by mnemoria v0.3.1+.
+   * `agent` is required by mnemoria v0.3.4+.
    */
   async add(
     entryType: EntryType,
@@ -232,7 +232,7 @@ export class MnemoriaCli {
   /**
    * Search memories. Returns parsed results.
    *
-   * Output format (v0.3.1):
+   * Output format (v0.3.4):
    *   Found N results:
    *   1. [type] (agent) summary (score: 0.123)
    */
@@ -312,7 +312,7 @@ export class MnemoriaCli {
   /**
    * Get timeline entries.
    *
-   * Output format (v0.3.1):
+   * Output format (v0.3.4):
    *   Timeline (N entries):
    *   1. [type] (agent) summary - timestamp
    */

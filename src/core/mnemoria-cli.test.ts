@@ -79,7 +79,7 @@ describe("MnemoriaCli", () => {
 
   describe("isAvailable", () => {
     it("returns true when binary responds", async () => {
-      mockExecResult("mnemoria 0.3.1");
+      mockExecResult("mnemoria 0.3.4");
       expect(await MnemoriaCli.isAvailable()).toBe(true);
     });
 
@@ -166,7 +166,7 @@ describe("MnemoriaCli", () => {
   // ─── search ──────────────────────────────────────────────────────────────
 
   describe("search", () => {
-    it("parses v0.3.1 search output", async () => {
+    it("parses v0.3.4 search output", async () => {
       const output = [
         "Found 2 results:",
         "1. [discovery] (build) Found async pattern (score: 0.288)",
@@ -278,7 +278,7 @@ describe("MnemoriaCli", () => {
   // ─── timeline ────────────────────────────────────────────────────────────
 
   describe("timeline", () => {
-    it("parses v0.3.1 timeline output", async () => {
+    it("parses v0.3.4 timeline output", async () => {
       const output = [
         "Timeline (2 entries):",
         "1. [intent] (plan) Fix auth flow - 1700000000000",

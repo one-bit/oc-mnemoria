@@ -2,7 +2,7 @@
  * oc-mnemoria — OpenCode Plugin
  *
  * Persistent shared memory ("hive mind") for OpenCode agents, powered by
- * the mnemoria Rust engine (v0.3.1+). All agents share a single memory
+ * the mnemoria Rust engine (v0.3.4+). All agents share a single memory
  * store — each entry is tagged with the agent that created it via
  * mnemoria's native --agent flag.
  */
