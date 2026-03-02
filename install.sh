@@ -18,7 +18,7 @@ echo ""
 
 echo "0. Checking prerequisites..."
 
-MNEMORIA_VERSION="0.3.4"
+MNEMORIA_VERSION="0.3.5"
 
 # Compare two semver strings. Returns 0 if $1 >= $2, 1 otherwise.
 version_gte() {

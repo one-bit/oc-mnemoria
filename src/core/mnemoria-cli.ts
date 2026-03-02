@@ -1,5 +1,5 @@
 /**
- * Wrapper around the `mnemoria` CLI binary (v0.3.4+).
+ * Wrapper around the `mnemoria` CLI binary (v0.3.5+).
  *
  * All interaction with the Rust mnemoria engine goes through this module.
  * Each method shells out to the `mnemoria` binary, parses the output, and
