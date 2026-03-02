@@ -18,7 +18,7 @@ echo ""
 
 echo "0. Checking prerequisites..."
 
-MIN_MNEMORIA="0.3.4"
+MNEMORIA_VERSION="0.3.4"
 
 # Compare two semver strings. Returns 0 if $1 >= $2, 1 otherwise.
 version_gte() {
@@ -42,24 +42,24 @@ EOF
 if ! command -v mnemoria >/dev/null 2>&1; then
     echo "   'mnemoria' CLI not found."
     if command -v cargo >/dev/null 2>&1; then
-        echo "   Installing mnemoria (>= $MIN_MNEMORIA) via cargo..."
-        cargo install mnemoria
+        echo "   Installing mnemoria v$MNEMORIA_VERSION via cargo..."
+        cargo install "mnemoria@$MNEMORIA_VERSION"
     else
         echo "   ERROR: Neither 'mnemoria' nor 'cargo' found."
         echo "   Install Rust first: https://rustup.rs"
-        echo "   Then run: cargo install mnemoria"
+        echo "   Then run: cargo install mnemoria@$MNEMORIA_VERSION"
         exit 1
     fi
 else
     CURRENT_VERSION="$(mnemoria --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "0.0.0")"
     echo "   mnemoria CLI found: $(command -v mnemoria) (v$CURRENT_VERSION)"
-    if ! version_gte "$CURRENT_VERSION" "$MIN_MNEMORIA"; then
-        echo "   Version $CURRENT_VERSION is below minimum $MIN_MNEMORIA. Updating..."
+    if ! version_gte "$CURRENT_VERSION" "$MNEMORIA_VERSION"; then
+        echo "   Version $CURRENT_VERSION is below required $MNEMORIA_VERSION. Updating..."
         if command -v cargo >/dev/null 2>&1; then
-            cargo install mnemoria
+            cargo install "mnemoria@$MNEMORIA_VERSION"
         else
             echo "   WARNING: cargo not found. Please update mnemoria manually:"
-            echo "   cargo install mnemoria"
+            echo "   cargo install mnemoria@$MNEMORIA_VERSION"
         fi
     fi
 fi
