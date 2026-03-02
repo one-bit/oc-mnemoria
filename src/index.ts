@@ -1,28 +1,8 @@
 /**
- * oc-mnemoria — barrel exports
+ * oc-mnemoria — OpenCode Plugin
+ *
+ * Main entry point. Exports only the plugin function so that OpenCode
+ * can safely load the package as `"oc-mnemoria"` (or `"oc-mnemoria/plugin"`).
  */
 
-export { default as OcMnemoria } from "./plugin.js";
-export { default } from "./plugin.js";
-export { Mind, getMind, resetMind } from "./core/mind.js";
-export { MnemoriaCli } from "./core/mnemoria-cli.js";
-export {
-  generateId,
-  estimateTokens,
-  truncateToTokens,
-  extractUserIntent,
-} from "./utils/helpers.js";
-export type {
-  EntryType,
-  MemoryEntry,
-  SearchResult,
-  MemoryStats,
-  TimelineOptions,
-  AgentName,
-  PluginConfig,
-  Observation,
-  ObservationMetadata,
-  UserIntent,
-} from "./types.js";
-export { DEFAULT_CONFIG, ENTRY_TYPES } from "./types.js";
-export * from "./constants.js";
+export { default, default as OcMnemoria } from "./plugin.js";

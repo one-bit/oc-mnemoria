@@ -51,7 +51,7 @@ curl -fsSL https://raw.githubusercontent.com/one-bit/oc-mnemoria/main/install.sh
 The script:
 
 1. Installs the `mnemoria` CLI (via `cargo install` if needed)
-2. Configures the compatibility plugin setup (`opencode.json`, `.opencode/package.json`, `.opencode/plugins/oc-mnemoria.js`)
+2. Adds `"oc-mnemoria"` to the plugin array in `opencode.json`
 3. Installs `/mn-*` slash commands to `.opencode/commands/`
 
 After installation, restart OpenCode and run:

@@ -7,7 +7,7 @@ CONFIG_FILE="opencode.json"
 PROJECT_DIR="$(pwd)"
 OPENCODE_DIR="$PROJECT_DIR/.opencode"
 PACKAGE_FILE="$OPENCODE_DIR/package.json"
-PLUGIN_FILE="$OPENCODE_DIR/plugins/oc-mnemoria.js"
+PLUGIN_FILE="$OPENCODE_DIR/plugins/oc-mnemoria.js"  # legacy; cleaned up below
 
 echo "=========================================="
 echo "  oc-mnemoria Installer"
@@ -65,14 +65,15 @@ else
 fi
 echo ""
 
-# ── Step 1: Configure compatibility plugin setup ────────────────────────────
+# ── Step 1: Configure plugin ─────────────────────────────────────────────────
 
 ensure_project_config() {
     if [ ! -f "$PROJECT_DIR/$CONFIG_FILE" ]; then
-        echo "   Creating $CONFIG_FILE in current directory..."
+        echo "   Creating $CONFIG_FILE with oc-mnemoria plugin..."
         cat > "$PROJECT_DIR/$CONFIG_FILE" <<'EOF'
 {
-  "$schema": "https://opencode.ai/config.json"
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["oc-mnemoria"]
 }
 EOF
         echo "   Created $PROJECT_DIR/$CONFIG_FILE"
@@ -80,63 +81,31 @@ EOF
     fi
 
     if command -v jq >/dev/null 2>&1; then
+        # Remove any legacy entries and add the canonical "oc-mnemoria" entry
         jq '
-          if (.plugin? | type) == "array" then
-            .plugin = (.plugin | map(select(. != "oc-mnemoria" and . != "oc-mnemoria/plugin" and . != "@oc-mnemoria/plugin")))
-            | if (.plugin | length) == 0 then del(.plugin) else . end
-          else
-            .
-          end
+          .plugin = (
+            [(.plugin // [])[] | select(. != "oc-mnemoria" and . != "oc-mnemoria/plugin" and . != "@oc-mnemoria/plugin")]
+            + ["oc-mnemoria"]
+          )
         ' "$PROJECT_DIR/$CONFIG_FILE" > "$PROJECT_DIR/$CONFIG_FILE.tmp" && mv "$PROJECT_DIR/$CONFIG_FILE.tmp" "$PROJECT_DIR/$CONFIG_FILE"
-        echo "   Ensured no conflicting oc-mnemoria entries in $PROJECT_DIR/$CONFIG_FILE"
-    elif grep -q 'oc-mnemoria' "$PROJECT_DIR/$CONFIG_FILE" 2>/dev/null; then
-        echo "   Warning: jq not found and $CONFIG_FILE may still contain plugin entries."
-        echo "   Please remove any plugin entries for oc-mnemoria from $CONFIG_FILE if OpenCode fails to start."
+        echo "   Added oc-mnemoria to plugin array in $CONFIG_FILE"
+    elif grep -q '"oc-mnemoria"' "$PROJECT_DIR/$CONFIG_FILE" 2>/dev/null; then
+        echo "   Found oc-mnemoria in $CONFIG_FILE"
     else
-        echo "   Found existing $CONFIG_FILE"
+        echo "   Warning: jq not found. Please add \"oc-mnemoria\" to the plugin array in $CONFIG_FILE."
     fi
 }
 
-ensure_local_dependency() {
-    mkdir -p "$OPENCODE_DIR"
-
-    if [ ! -f "$PACKAGE_FILE" ]; then
-        cat > "$PACKAGE_FILE" <<'EOF'
-{
-  "dependencies": {
-    "oc-mnemoria": "latest"
-  }
-}
-EOF
-        echo "   Created $PACKAGE_FILE"
-        return
-    fi
-
-    if command -v jq >/dev/null 2>&1; then
-        jq '.dependencies = ((.dependencies // {}) + {"oc-mnemoria": "latest"})' "$PACKAGE_FILE" > "$PACKAGE_FILE.tmp" && mv "$PACKAGE_FILE.tmp" "$PACKAGE_FILE"
-        echo "   Ensured oc-mnemoria dependency in $PACKAGE_FILE"
-    elif grep -q '"oc-mnemoria"' "$PACKAGE_FILE" 2>/dev/null; then
-        echo "   Found oc-mnemoria dependency in $PACKAGE_FILE"
-    else
-        echo "   Warning: jq not found and $PACKAGE_FILE exists without oc-mnemoria dependency."
-        echo "   Please add: \"oc-mnemoria\": \"latest\" under dependencies."
+cleanup_legacy_wrapper() {
+    if [ -f "$PLUGIN_FILE" ]; then
+        rm -f "$PLUGIN_FILE"
+        echo "   Removed legacy wrapper plugin $PLUGIN_FILE"
     fi
 }
 
-ensure_wrapper_plugin() {
-    mkdir -p "$OPENCODE_DIR/plugins"
-    cat > "$PLUGIN_FILE" <<'EOF'
-import OcMnemoria from "oc-mnemoria/plugin"
-
-export const OcMnemoriaPlugin = async (ctx) => OcMnemoria(ctx)
-EOF
-    echo "   Wrote compatibility wrapper plugin to $PLUGIN_FILE"
-}
-
-echo "1. Configuring compatibility plugin setup..."
+echo "1. Configuring plugin..."
 ensure_project_config
-ensure_local_dependency
-ensure_wrapper_plugin
+cleanup_legacy_wrapper
 echo ""
 
 # ── Step 2: Install commands ─────────────────────────────────────────────────
@@ -182,10 +151,8 @@ echo "=========================================="
 echo "  Installation complete!"
 echo "=========================================="
 echo ""
-echo "Installed compatibility setup for current OpenCode plugin behavior:"
-echo "  - $PROJECT_DIR/$CONFIG_FILE"
-echo "  - $PACKAGE_FILE"
-echo "  - $PLUGIN_FILE"
+echo "Configured:"
+echo "  - $PROJECT_DIR/$CONFIG_FILE (plugin entry)"
 echo "  - $OPENCODE_DIR/commands/ (mn-* slash commands)"
 echo ""
 echo "Next steps:"
